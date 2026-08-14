@@ -1,0 +1,421 @@
+{
+  "apiVersion": "controller.embed-labs.dev/v1",
+  "kind": "NormalizedDeviceModel",
+  "metadata": {
+    "id": "mock.cia402-servo.axis1",
+    "version": "1.0.0",
+    "createdAt": "2026-07-25T00:00:00Z",
+    "description": "Mock single-axis CiA402 servo with CSP and profile modes"
+  },
+  "spec": {
+    "identity": {
+      "vendorId": 286331153,
+      "productCode": 8193,
+      "revision": 1
+    },
+    "esiSource": {
+      "uri": "mock://esi/mock-cia402-servo.xml",
+      "sha256": "4bf158b257ce44b357b792cc9b5c3a001405e65d936110473ee9cfe3f433d936",
+      "importedAt": "2026-07-25T00:00:00Z",
+      "complete": true,
+      "warnings": []
+    },
+    "mailbox": {
+      "supported": true,
+      "protocols": [
+        "CoE",
+        "FoE"
+      ],
+      "receiveOffset": 4096,
+      "receiveSize": 512,
+      "sendOffset": 4608,
+      "sendSize": 512
+    },
+    "syncManagers": [
+      {
+        "index": 0,
+        "direction": "mailbox-out",
+        "startAddress": 4096,
+        "sizeBytes": 512,
+        "controlByte": 38,
+        "enabled": true
+      },
+      {
+        "index": 1,
+        "direction": "mailbox-in",
+        "startAddress": 4608,
+        "sizeBytes": 512,
+        "controlByte": 34,
+        "enabled": true
+      },
+      {
+        "index": 2,
+        "direction": "master-to-slave",
+        "startAddress": 5120,
+        "sizeBytes": 11,
+        "controlByte": 36,
+        "enabled": true
+      },
+      {
+        "index": 3,
+        "direction": "slave-to-master",
+        "startAddress": 5376,
+        "sizeBytes": 11,
+        "controlByte": 32,
+        "enabled": true
+      }
+    ],
+    "fmmus": [
+      {
+        "index": 0,
+        "usage": "outputs",
+        "required": true
+      },
+      {
+        "index": 1,
+        "usage": "inputs",
+        "required": true
+      }
+    ],
+    "rxPdos": [
+      {
+        "index": 5632,
+        "name": "CiA402 command",
+        "syncManager": 2,
+        "fixed": true,
+        "mandatory": true,
+        "entries": [
+          {
+            "index": 24640,
+            "subIndex": 0,
+            "name": "Controlword",
+            "bitLength": 16,
+            "dataType": "unsigned-integer16",
+            "mapping": "fixed",
+            "semantic": "cia402-controlword"
+          },
+          {
+            "index": 24672,
+            "subIndex": 0,
+            "name": "Modes of operation",
+            "bitLength": 8,
+            "dataType": "integer8",
+            "mapping": "fixed",
+            "semantic": "cia402-mode-command"
+          },
+          {
+            "index": 24698,
+            "subIndex": 0,
+            "name": "Target position",
+            "bitLength": 32,
+            "dataType": "integer32",
+            "mapping": "fixed",
+            "semantic": "cia402-target-position",
+            "unit": "encoder-count"
+          },
+          {
+            "index": 24831,
+            "subIndex": 0,
+            "name": "Target velocity",
+            "bitLength": 32,
+            "dataType": "integer32",
+            "mapping": "fixed",
+            "semantic": "cia402-target-velocity",
+            "unit": "encoder-count-per-second"
+          }
+        ]
+      }
+    ],
+    "txPdos": [
+      {
+        "index": 6656,
+        "name": "CiA402 feedback",
+        "syncManager": 3,
+        "fixed": true,
+        "mandatory": true,
+        "entries": [
+          {
+            "index": 24641,
+            "subIndex": 0,
+            "name": "Statusword",
+            "bitLength": 16,
+            "dataType": "unsigned-integer16",
+            "mapping": "fixed",
+            "semantic": "cia402-statusword"
+          },
+          {
+            "index": 24673,
+            "subIndex": 0,
+            "name": "Modes of operation display",
+            "bitLength": 8,
+            "dataType": "integer8",
+            "mapping": "fixed",
+            "semantic": "cia402-mode-display"
+          },
+          {
+            "index": 24676,
+            "subIndex": 0,
+            "name": "Position actual value",
+            "bitLength": 32,
+            "dataType": "integer32",
+            "mapping": "fixed",
+            "semantic": "cia402-actual-position",
+            "unit": "encoder-count"
+          },
+          {
+            "index": 24684,
+            "subIndex": 0,
+            "name": "Velocity actual value",
+            "bitLength": 32,
+            "dataType": "integer32",
+            "mapping": "fixed",
+            "semantic": "cia402-actual-velocity",
+            "unit": "encoder-count-per-second"
+          }
+        ]
+      }
+    ],
+    "objectDictionary": [
+      {
+        "index": 24640,
+        "subIndex": 0,
+        "name": "Controlword",
+        "dataType": "unsigned-integer16",
+        "access": "rw",
+        "pdoMappable": true,
+        "semantic": "cia402-controlword"
+      },
+      {
+        "index": 24641,
+        "subIndex": 0,
+        "name": "Statusword",
+        "dataType": "unsigned-integer16",
+        "access": "ro",
+        "pdoMappable": true,
+        "semantic": "cia402-statusword"
+      },
+      {
+        "index": 24672,
+        "subIndex": 0,
+        "name": "Modes of operation",
+        "dataType": "integer8",
+        "access": "rw",
+        "pdoMappable": true,
+        "semantic": "cia402-mode-command"
+      },
+      {
+        "index": 24673,
+        "subIndex": 0,
+        "name": "Modes of operation display",
+        "dataType": "integer8",
+        "access": "ro",
+        "pdoMappable": true,
+        "semantic": "cia402-mode-display"
+      },
+      {
+        "index": 24698,
+        "subIndex": 0,
+        "name": "Target position",
+        "dataType": "integer32",
+        "access": "rw",
+        "pdoMappable": true,
+        "semantic": "cia402-target-position",
+        "unit": "encoder-count"
+      },
+      {
+        "index": 24831,
+        "subIndex": 0,
+        "name": "Target velocity",
+        "dataType": "integer32",
+        "access": "rw",
+        "pdoMappable": true,
+        "semantic": "cia402-target-velocity",
+        "unit": "encoder-count-per-second"
+      },
+      {
+        "index": 24676,
+        "subIndex": 0,
+        "name": "Position actual value",
+        "dataType": "integer32",
+        "access": "ro",
+        "pdoMappable": true,
+        "semantic": "cia402-actual-position",
+        "unit": "encoder-count"
+      },
+      {
+        "index": 24684,
+        "subIndex": 0,
+        "name": "Velocity actual value",
+        "dataType": "integer32",
+        "access": "ro",
+        "pdoMappable": true,
+        "semantic": "cia402-actual-velocity",
+        "unit": "encoder-count-per-second"
+      }
+    ],
+    "distributedClocks": {
+      "supported": true,
+      "referenceClockCapable": true,
+      "sync0": {
+        "supported": true,
+        "minimumCycleNs": 125000,
+        "maximumCycleNs": 4000000,
+        "minimumShiftNs": -100000,
+        "maximumShiftNs": 100000
+      },
+      "sync1": {
+        "supported": false,
+        "minimumCycleNs": 0,
+        "maximumCycleNs": 0,
+        "minimumShiftNs": 0,
+        "maximumShiftNs": 0
+      },
+      "modes": [
+        {
+          "name": "DC-SYNC0",
+          "assignActivate": 768
+        }
+      ]
+    },
+    "cycle": {
+      "minimumUs": 125,
+      "maximumUs": 4000,
+      "supportedUs": [
+        125,
+        250,
+        500,
+        1000,
+        2000,
+        4000
+      ]
+    },
+    "watchdog": {
+      "supported": true,
+      "minimumMs": 2,
+      "maximumMs": 10000,
+      "defaultMs": 100,
+      "safeState": "quick-stop"
+    },
+    "startupSdos": [
+      {
+        "order": 0,
+        "transition": "PS",
+        "index": 24672,
+        "subIndex": 0,
+        "valueHex": "08",
+        "timeoutMs": 1000,
+        "source": "standard"
+      }
+    ],
+    "cia402": {
+      "supported": true,
+      "axes": 1,
+      "modes": [
+        "profile-position",
+        "profile-velocity",
+        "homing",
+        "cyclic-synchronous-position"
+      ],
+      "requiredObjects": [
+        {
+          "index": 24640,
+          "subIndex": 0
+        },
+        {
+          "index": 24641,
+          "subIndex": 0
+        },
+        {
+          "index": 24672,
+          "subIndex": 0
+        },
+        {
+          "index": 24673,
+          "subIndex": 0
+        }
+      ]
+    },
+    "processImage": {
+      "inputBytes": 11,
+      "outputBytes": 11,
+      "variables": [
+        {
+          "id": "cia402-controlword",
+          "direction": "output",
+          "byteOffset": 0,
+          "bitOffset": 0,
+          "bitLength": 16,
+          "dataType": "unsigned-integer16",
+          "object": {
+            "index": 24640,
+            "subIndex": 0
+          }
+        },
+        {
+          "id": "cia402-target-velocity",
+          "direction": "output",
+          "byteOffset": 7,
+          "bitOffset": 0,
+          "bitLength": 32,
+          "dataType": "integer32",
+          "object": {
+            "index": 24831,
+            "subIndex": 0
+          }
+        },
+        {
+          "id": "cia402-statusword",
+          "direction": "input",
+          "byteOffset": 0,
+          "bitOffset": 0,
+          "bitLength": 16,
+          "dataType": "unsigned-integer16",
+          "object": {
+            "index": 24641,
+            "subIndex": 0
+          }
+        },
+        {
+          "id": "cia402-actual-velocity",
+          "direction": "input",
+          "byteOffset": 7,
+          "bitOffset": 0,
+          "bitLength": 32,
+          "dataType": "integer32",
+          "object": {
+            "index": 24684,
+            "subIndex": 0
+          }
+        }
+      ]
+    },
+    "safeOutputs": [
+      {
+        "variable": "cia402-controlword",
+        "value": 0,
+        "reason": "The mock axis enters switch-on-disabled after task loss."
+      },
+      {
+        "variable": "cia402-target-velocity",
+        "value": 0,
+        "reason": "The mock velocity command is zero in the safe state."
+      }
+    ],
+    "privateInitialization": {
+      "status": "not-required",
+      "steps": [],
+      "missingInformation": []
+    },
+    "diagnostics": {
+      "rules": [
+        {
+          "code": "cia402-fault-bit",
+          "source": "cia402-statusword",
+          "severity": "error",
+          "recovery": "Command ControlledStop, keep power disabled, and report the drive error code."
+        }
+      ],
+      "unknownCodePolicy": "report-raw-and-stop-if-severe"
+    }
+  }
+}

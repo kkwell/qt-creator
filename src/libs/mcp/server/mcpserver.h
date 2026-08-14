@@ -65,9 +65,9 @@ public:
     prompt and resource handling, and notification delivery. Tools and prompts can be
     registered dynamically, and resources can be served or generated on demand.
 
-    The server supports both HTTP and custom IO streams, and can be configured to allow
-    cross-origin requests for browser-based clients. Notifications and completions can be
-    sent to connected clients at any time.
+    The server supports both HTTP and custom IO streams. CORS response headers can be enabled
+    for browser-based loopback clients, but a non-loopback Origin remains rejected.
+    Notifications and completions can be sent to connected clients at any time.
 
     \sa ToolInterface, addTool(), addPrompt(), addResource()
 */
@@ -246,6 +246,19 @@ public:
     const Schema::ClientCapabilities &clientCapabilities() const;
 
     /*!
+        \brief Returns the opaque server-assigned MCP session identifier.
+
+        Tool implementations can include this value in audit records. It is not
+        a controller session or authorization credential.
+    */
+    QString sessionId() const;
+
+    /*!
+        \brief Returns the implementation information sent by the MCP client.
+    */
+    const Schema::Implementation &clientInfo() const;
+
+    /*!
         \brief Sends the tool call result to the client and closes the connection.
 
         Use this to return the final result of a synchronous (non-task-based)
@@ -421,6 +434,7 @@ protected:
     ToolInterface(
         std::weak_ptr<ServerPrivate> serverPrivate,
         const Schema::ClientCapabilities &clientCaps,
+        const Schema::Implementation &clientInfo,
         const Schema::CallToolRequest &request,
         const QString &sessionId,
         const Responder &responder);

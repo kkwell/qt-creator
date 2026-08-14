@@ -257,6 +257,13 @@ Utils::Result<CallToolRequestParams::Meta> fromJson<CallToolRequestParams::Meta>
     CallToolRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -265,6 +272,8 @@ QJsonObject toJson(const CallToolRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -1780,6 +1789,13 @@ Utils::Result<CompleteRequestParams::Meta> fromJson<CompleteRequestParams::Meta>
     CompleteRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -1788,6 +1804,8 @@ QJsonObject toJson(const CompleteRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -1926,6 +1944,13 @@ Utils::Result<GetPromptRequestParams::Meta> fromJson<GetPromptRequestParams::Met
     GetPromptRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -1934,6 +1959,8 @@ QJsonObject toJson(const GetPromptRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -2181,6 +2208,13 @@ Utils::Result<InitializeRequestParams::Meta> fromJson<InitializeRequestParams::M
     InitializeRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -2189,6 +2223,8 @@ QJsonObject toJson(const InitializeRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -2273,6 +2309,13 @@ Utils::Result<PaginatedRequestParams::Meta> fromJson<PaginatedRequestParams::Met
     PaginatedRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -2281,6 +2324,8 @@ QJsonObject toJson(const PaginatedRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -2497,6 +2542,13 @@ Utils::Result<RequestParams::Meta> fromJson<RequestParams::Meta>(const QJsonValu
     RequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -2505,6 +2557,8 @@ QJsonObject toJson(const RequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -2573,6 +2627,13 @@ Utils::Result<ReadResourceRequestParams::Meta> fromJson<ReadResourceRequestParam
     ReadResourceRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -2581,6 +2642,8 @@ QJsonObject toJson(const ReadResourceRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -2688,6 +2751,13 @@ Utils::Result<SetLevelRequestParams::Meta> fromJson<SetLevelRequestParams::Meta>
     SetLevelRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -2696,6 +2766,8 @@ QJsonObject toJson(const SetLevelRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -2769,6 +2841,13 @@ Utils::Result<SubscribeRequestParams::Meta> fromJson<SubscribeRequestParams::Met
     SubscribeRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -2777,6 +2856,8 @@ QJsonObject toJson(const SubscribeRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -2849,6 +2930,13 @@ Utils::Result<UnsubscribeRequestParams::Meta> fromJson<UnsubscribeRequestParams:
     UnsubscribeRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -2857,6 +2945,8 @@ QJsonObject toJson(const UnsubscribeRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -3927,6 +4017,13 @@ Utils::Result<Tool::InputSchema> fromJson<Tool::InputSchema>(const QJsonValue &v
     }
     if (obj.value("type").toString() != "object")
         return Utils::ResultError("Field 'type' must be 'object', got: " + obj.value("type").toString());
+    {
+        const QSet<QString> knownKeys{"$schema", "properties", "required", "type"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     return result;
 }
 
@@ -3946,6 +4043,8 @@ QJsonObject toJson(const Tool::InputSchema &data)
         for (const auto &v : *data._required) arr_required.append(v);
         obj.insert("required", arr_required);
     }
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -3977,6 +4076,13 @@ Utils::Result<Tool::OutputSchema> fromJson<Tool::OutputSchema>(const QJsonValue 
     }
     if (obj.value("type").toString() != "object")
         return Utils::ResultError("Field 'type' must be 'object', got: " + obj.value("type").toString());
+    {
+        const QSet<QString> knownKeys{"$schema", "properties", "required", "type"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     return result;
 }
 
@@ -3996,6 +4102,8 @@ QJsonObject toJson(const Tool::OutputSchema &data)
         for (const auto &v : *data._required) arr_required.append(v);
         obj.insert("required", arr_required);
     }
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -4125,6 +4233,13 @@ Utils::Result<CreateMessageRequestParams::Meta> fromJson<CreateMessageRequestPar
     CreateMessageRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -4133,6 +4248,8 @@ QJsonObject toJson(const CreateMessageRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -4895,6 +5012,13 @@ Utils::Result<ElicitRequestFormParams::Meta> fromJson<ElicitRequestFormParams::M
     ElicitRequestFormParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -4903,6 +5027,8 @@ QJsonObject toJson(const ElicitRequestFormParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -5003,6 +5129,13 @@ Utils::Result<ElicitRequestURLParams::Meta> fromJson<ElicitRequestURLParams::Met
     ElicitRequestURLParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -5011,6 +5144,8 @@ QJsonObject toJson(const ElicitRequestURLParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -6705,6 +6840,13 @@ Utils::Result<ResourceRequestParams::Meta> fromJson<ResourceRequestParams::Meta>
     ResourceRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -6713,6 +6855,8 @@ QJsonObject toJson(const ResourceRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 
@@ -7059,6 +7203,13 @@ Utils::Result<TaskAugmentedRequestParams::Meta> fromJson<TaskAugmentedRequestPar
     TaskAugmentedRequestParams::Meta result;
     if (obj.contains("progressToken"))
         result._progressToken = co_await fromJson<ProgressToken>(obj["progressToken"]);
+    {
+        const QSet<QString> knownKeys{"progressToken"};
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            if (!knownKeys.contains(it.key()))
+                result._additionalProperties.insert(it.key(), it.value());
+        }
+    }
     co_return result;
 }
 
@@ -7067,6 +7218,8 @@ QJsonObject toJson(const TaskAugmentedRequestParams::Meta &data)
     QJsonObject obj;
     if (data._progressToken.has_value())
         obj.insert("progressToken", toJsonValue(*data._progressToken));
+    for (auto it = data._additionalProperties.constBegin(); it != data._additionalProperties.constEnd(); ++it)
+        obj.insert(it.key(), it.value());
     return obj;
 }
 

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "canonicalization": {"const": "kvell-json-ascii-sorted-compact-lf-v1"},
+    "format": {"const": "embed-labs.ethercat-device-adapter-authorization-policy-v1"},
+    "formatVersion": {"const": 1},
+    "policyId": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._:/{}-]{0,255}$", "type": "string"},
+    "policyRevision": {"minimum": 1, "maximum": 4294967295, "type": "integer"},
+    "revokedAuthorizationIds": {
+      "items": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._:/{}-]{0,255}$", "type": "string"},
+      "type": "array",
+      "uniqueItems": true
+    },
+    "revokedSignerKeyIds": {
+      "items": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+      "type": "array",
+      "uniqueItems": true
+    },
+    "rootKeyId": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "signers": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "adapterIds": {
+            "items": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._:/{}-]{0,255}$", "type": "string"},
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "decisions": {
+            "items": {"enum": ["allow", "deny"]},
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "keyId": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+          "publicKey": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+        },
+        "required": ["keyId", "publicKey", "adapterIds", "decisions"],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    }
+  },
+  "required": [
+    "format",
+    "formatVersion",
+    "canonicalization",
+    "policyId",
+    "policyRevision",
+    "rootKeyId",
+    "signers",
+    "revokedSignerKeyIds",
+    "revokedAuthorizationIds"
+  ],
+  "title": "Embed Labs device-adapter authorization policy v1",
+  "type": "object"
+}

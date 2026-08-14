@@ -15,6 +15,7 @@ Product {
             "cplusplus/**/*",
             "debugger/**/*",
             "designer/**/*",
+            "ethercat/**/*",
             "glsl/**/*",
             "jsonschemas/**/*",
             "lua-lupdate/**/*",

@@ -9,6 +9,7 @@
 
 #include <utils/filepath.h>
 #include <utils/id.h>
+#include <utils/outputformat.h>
 #include <utils/result.h>
 
 QT_BEGIN_NAMESPACE
@@ -139,6 +140,14 @@ public:
     static void runRunConfiguration(RunConfiguration *rc, Utils::Id runMode,
                              const bool forceSkipDeploy = false);
     static QList<RunControl *> allRunControls();
+
+    // Posts to a reusable Application Output tab without creating or starting a RunControl.
+    static void postApplicationOutput(
+        Utils::Id channelId,
+        const QString &displayName,
+        const QString &message,
+        Utils::OutputFormat format = Utils::NormalMessageFormat);
+    static void showApplicationOutput(Utils::Id channelId);
 
     static void addExistingFiles(FolderNode *folderNode, const Utils::FilePaths &filePaths);
 

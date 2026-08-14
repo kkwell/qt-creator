@@ -1,0 +1,5 @@
+[plugins."embed-labs@embed-labs"]
+enabled = false
+
+[plugins."embed-labs@embed-labs".mcp_servers.embed-labs]
+enabled = false

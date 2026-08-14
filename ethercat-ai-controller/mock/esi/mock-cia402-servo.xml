@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EtherCATInfo>
+  <Vendor>
+    <Id>#x11111111</Id>
+    <Name LcId="1033">Embed Labs Mock</Name>
+  </Vendor>
+  <Descriptions>
+    <Groups>
+      <Group>
+        <Type>MockDrive</Type>
+        <Name LcId="1033">Mock Drives</Name>
+      </Group>
+    </Groups>
+    <Devices>
+      <Device>
+        <Type ProductCode="#x00002001" RevisionNo="#x00000001">MOCK-CIA402-AXIS1</Type>
+        <Name LcId="1033">Mock CiA402 Servo</Name>
+        <GroupType>MockDrive</GroupType>
+        <Sm StartAddress="#x1000" DefaultSize="512" ControlByte="#x26" Enable="1">MBoxOut</Sm>
+        <Sm StartAddress="#x1200" DefaultSize="512" ControlByte="#x22" Enable="1">MBoxIn</Sm>
+        <Sm StartAddress="#x1400" DefaultSize="11" ControlByte="#x24" Enable="1">Outputs</Sm>
+        <Sm StartAddress="#x1500" DefaultSize="11" ControlByte="#x20" Enable="1">Inputs</Sm>
+        <RxPdo Sm="2" Fixed="1" Mandatory="1">
+          <Index>#x1600</Index>
+          <Name>CiA402 command</Name>
+          <Entry><Index>#x6040</Index><SubIndex>0</SubIndex><BitLen>16</BitLen><Name>Controlword</Name><DataType>UINT</DataType></Entry>
+          <Entry><Index>#x6060</Index><SubIndex>0</SubIndex><BitLen>8</BitLen><Name>Modes of operation</Name><DataType>SINT</DataType></Entry>
+          <Entry><Index>#x607a</Index><SubIndex>0</SubIndex><BitLen>32</BitLen><Name>Target position</Name><DataType>DINT</DataType></Entry>
+          <Entry><Index>#x60ff</Index><SubIndex>0</SubIndex><BitLen>32</BitLen><Name>Target velocity</Name><DataType>DINT</DataType></Entry>
+        </RxPdo>
+        <TxPdo Sm="3" Fixed="1" Mandatory="1">
+          <Index>#x1a00</Index>
+          <Name>CiA402 feedback</Name>
+          <Entry><Index>#x6041</Index><SubIndex>0</SubIndex><BitLen>16</BitLen><Name>Statusword</Name><DataType>UINT</DataType></Entry>
+          <Entry><Index>#x6061</Index><SubIndex>0</SubIndex><BitLen>8</BitLen><Name>Modes of operation display</Name><DataType>SINT</DataType></Entry>
+          <Entry><Index>#x6064</Index><SubIndex>0</SubIndex><BitLen>32</BitLen><Name>Position actual value</Name><DataType>DINT</DataType></Entry>
+          <Entry><Index>#x606c</Index><SubIndex>0</SubIndex><BitLen>32</BitLen><Name>Velocity actual value</Name><DataType>DINT</DataType></Entry>
+        </TxPdo>
+        <Mailbox>
+          <CoE SdoInfo="true" PdoAssign="1" PdoConfig="true" CompleteAccess="1">
+            <InitCmds>
+              <InitCmd>
+                <Transition>PS</Transition>
+                <Index>#x6060</Index>
+                <SubIndex>0</SubIndex>
+                <Data>08</Data>
+                <Comment>Set cyclic synchronous position mode</Comment>
+              </InitCmd>
+            </InitCmds>
+          </CoE>
+        </Mailbox>
+        <Dc>
+          <OpMode>
+            <Name>DC-SYNC0</Name>
+            <AssignActivate>#x0300</AssignActivate>
+            <CycleTimeSync0>125000</CycleTimeSync0>
+            <ShiftTimeSync0>0</ShiftTimeSync0>
+          </OpMode>
+        </Dc>
+      </Device>
+    </Devices>
+  </Descriptions>
+</EtherCATInfo>

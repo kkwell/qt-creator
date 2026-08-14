@@ -1,0 +1,14 @@
+{
+    "Id" : "ethercatprojectcompiler",
+    "DisplayName" : "EtherCAT Project Compiler",
+    "Name" : "EtherCATProjectCompiler",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "embedlabs",
+    "Vendor" : "Embed Labs",
+    "Copyright" : "(C) 2026 Embed Labs",
+    "License" : [ "Commercial Usage" ],
+    "Category" : "EtherCAT",
+    "Description" : "Provisioned API-042 project compiler and immutable operation evidence.",
+    ${IDE_PLUGIN_DEPENDENCIES}
+}

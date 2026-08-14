@@ -2,10 +2,10 @@ set(IDE_VERSION "20.0.82")                            # The IDE version.
 set(IDE_VERSION_COMPAT "20.0.82")                     # The IDE Compatibility version.
 set(IDE_VERSION_DISPLAY "21.0.0-beta1")               # The IDE display version.
 
-set(IDE_SETTINGSVARIANT "QtProject")                  # The IDE settings variation.
-set(IDE_DISPLAY_NAME "Qt Creator")                    # The IDE display name.
-set(IDE_ID "qtcreator")                               # The IDE id (no spaces, lowercase!)
-set(IDE_CASED_ID "QtCreator")                         # The cased IDE id (no spaces!)
+set(IDE_SETTINGSVARIANT "EmbedLabsProject")           # The IDE settings variation.
+set(IDE_DISPLAY_NAME "Embed Labs")                    # The IDE display name.
+set(IDE_ID "embedlabs")                               # The IDE id (no spaces, lowercase!)
+set(IDE_CASED_ID "EmbedLabs")                         # The cased IDE id (no spaces!)
 set(IDE_BUNDLE_IDENTIFIER "org.qt-project.${IDE_ID}") # The macOS application bundle identifier.
 set(IDE_APP_ID "org.qt-project.${IDE_ID}")            # The free desktop application identifier.
 set(IDE_PUBLISHER "The Qt Company Ltd.")

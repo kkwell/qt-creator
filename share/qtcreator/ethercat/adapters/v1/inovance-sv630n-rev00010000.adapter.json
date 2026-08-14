@@ -1,0 +1,833 @@
+{
+  "schemaVersion": "embed-labs.device-adapter/v1",
+  "id": "org.embedlabs.adapter.inovance.sv630n-1axis.rev00010000",
+  "version": "0.1.0",
+  "displayName": "Inovance SV630N one-axis revision 0x00010000",
+  "description": "Candidate upper-layer adapter for the exact DC RxPDO 0x1702 and TxPDO 0x1b04 profile in raw drive units.",
+  "qualification": "candidate",
+  "matchPriority": 900,
+  "match": {
+    "vendorId": 1048576,
+    "productCode": 786706,
+    "minimumRevision": 65536,
+    "maximumRevision": 65536,
+    "exactEsiSha256": "e6f39fd4e0f8801c83ec3ac796e138fe3ee1566cb94bb28285b93538fdb9e4a1"
+  },
+  "capabilities": [
+    "org.embedlabs.ethercat.coe",
+    "org.embedlabs.ethercat.distributed-clocks",
+    "org.embedlabs.ethercat.cia402",
+    "org.embedlabs.motion.velocity",
+    "org.embedlabs.ethercat.diagnostics"
+  ],
+  "source": {
+    "id": "org.embedlabs.esi.inovance.sv630n-v16",
+    "version": "16",
+    "location": "resource://ethercat/esi/INOVANCE_SV630N_1Axis_V16.xml",
+    "sha256": "e6f39fd4e0f8801c83ec3ac796e138fe3ee1566cb94bb28285b93538fdb9e4a1"
+  },
+  "evidenceSha256": "",
+  "signatureVerified": false,
+  "realHardwareAllowed": false,
+  "signals": [
+    {
+      "id": "org.embedlabs.inovance.sv630n.controlword",
+      "displayName": "Controlword (internal)",
+      "description": "Internal CiA 402 action resource; never exposed as a generic manual field.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "write-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5890,
+          "objectIndex": 24640,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": null,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": true,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "controlled-stop"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.target-position",
+      "displayName": "Target position",
+      "description": "Target position in unqualified raw drive units.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "write-only",
+      "required": false,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5890,
+          "objectIndex": 24698,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "raw-drive-unit",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": 1,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": true,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "controlled-stop"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.target-velocity",
+      "displayName": "Target velocity",
+      "description": "Target velocity in unqualified raw drive units.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "write-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5890,
+          "objectIndex": 24831,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "raw-drive-unit",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": 1,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": true,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "controlled-stop"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.target-torque",
+      "displayName": "Target torque",
+      "description": "Target torque in unqualified raw drive units.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "write-only",
+      "required": false,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5890,
+          "objectIndex": 24689,
+          "subIndex": 0,
+          "physicalType": "integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "raw-drive-unit",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": 1,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": true,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "controlled-stop"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.mode-command",
+      "displayName": "Mode command (internal)",
+      "description": "Internal CiA 402 mode action resource; never exposed as a generic manual field.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "write-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5890,
+          "objectIndex": 24672,
+          "subIndex": 0,
+          "physicalType": "integer8",
+          "bitWidth": 8,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": null,
+        "enumValues": [
+          {
+            "value": 8,
+            "name": "csp",
+            "displayName": "Cyclic synchronous position"
+          },
+          {
+            "value": 9,
+            "name": "csv",
+            "displayName": "Cyclic synchronous velocity"
+          }
+        ]
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": true,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "controlled-stop"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.error-code",
+      "displayName": "Error code",
+      "description": "Raw CiA 402 error code.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24639,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": null,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": false,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "reject"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.statusword",
+      "displayName": "Statusword",
+      "description": "Raw CiA 402 statusword used by bounded action checks.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24641,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": null,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": false,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "reject"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.actual-position",
+      "displayName": "Actual position",
+      "description": "Actual position in unqualified raw drive units.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "required": false,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24676,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "raw-drive-unit",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": 1,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": false,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "reject"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.actual-torque",
+      "displayName": "Actual torque",
+      "description": "Actual torque in unqualified raw drive units.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "required": false,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24695,
+          "subIndex": 0,
+          "physicalType": "integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "raw-drive-unit",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": 1,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": false,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "reject"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.mode-display",
+      "displayName": "Mode display",
+      "description": "CiA 402 mode feedback.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24673,
+          "subIndex": 0,
+          "physicalType": "integer8",
+          "bitWidth": 8,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": null,
+        "enumValues": [
+          {
+            "value": 8,
+            "name": "csp",
+            "displayName": "Cyclic synchronous position"
+          },
+          {
+            "value": 9,
+            "name": "csv",
+            "displayName": "Cyclic synchronous velocity"
+          }
+        ]
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": false,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "reject"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.following-error",
+      "displayName": "Following error",
+      "description": "Following error in unqualified raw drive units.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "required": false,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24820,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "raw-drive-unit",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": 1,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": false,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "reject"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.actual-velocity",
+      "displayName": "Actual velocity",
+      "description": "Actual velocity in unqualified raw drive units.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24684,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "raw-drive-unit",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": 1,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.inovance.sv630n.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": false,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "reject"
+      }
+    }
+  ],
+  "processDataProfiles": [
+    {
+      "id": "inovance.sv630n.csv-dc-rx1702-tx1b04",
+      "rxPdos": [
+        5890
+      ],
+      "txPdos": [
+        6916
+      ],
+      "requiredSignals": [
+        "org.embedlabs.inovance.sv630n.controlword",
+        "org.embedlabs.inovance.sv630n.target-velocity",
+        "org.embedlabs.inovance.sv630n.mode-command",
+        "org.embedlabs.inovance.sv630n.error-code",
+        "org.embedlabs.inovance.sv630n.statusword",
+        "org.embedlabs.inovance.sv630n.mode-display",
+        "org.embedlabs.inovance.sv630n.actual-velocity"
+      ]
+    }
+  ],
+  "moduleProfiles": [],
+  "controlActions": [
+    {
+      "id": "org.embedlabs.inovance.sv630n.action.prepare-csv",
+      "displayName": "Prepare CSV (Candidate, disabled)",
+      "description": "Finite CiA 402 CSV preparation candidate. It is compiler input and is not executable in this qualification state.",
+      "enabled": false,
+      "requiresExclusiveControl": true,
+      "requiresDc": true,
+      "holdToRun": true,
+      "commandTtlMs": 0,
+      "runtimeConditions": [
+        "org.embedlabs.runtime.active-profile-bound",
+        "org.embedlabs.runtime.fault-free",
+        "org.embedlabs.runtime.dc-locked"
+      ],
+      "failureAction": "controlled-stop",
+      "timeoutAction": "controlled-stop",
+      "requiredSignals": [
+        "org.embedlabs.inovance.sv630n.controlword",
+        "org.embedlabs.inovance.sv630n.statusword",
+        "org.embedlabs.inovance.sv630n.mode-command",
+        "org.embedlabs.inovance.sv630n.mode-display"
+      ],
+      "parameters": [],
+      "steps": [
+        {
+          "kind": "write-signal",
+          "signalId": "org.embedlabs.inovance.sv630n.mode-command",
+          "value": {
+            "source": "literal",
+            "literal": 9,
+            "parameterId": null
+          },
+          "mask": {
+            "source": "invalid",
+            "literal": null,
+            "parameterId": null
+          },
+          "timeoutMs": 1000
+        },
+        {
+          "kind": "wait-masked-equals",
+          "signalId": "org.embedlabs.inovance.sv630n.mode-display",
+          "value": {
+            "source": "literal",
+            "literal": 9,
+            "parameterId": null
+          },
+          "mask": {
+            "source": "literal",
+            "literal": 255,
+            "parameterId": null
+          },
+          "timeoutMs": 3000
+        },
+        {
+          "kind": "write-signal",
+          "signalId": "org.embedlabs.inovance.sv630n.controlword",
+          "value": {
+            "source": "literal",
+            "literal": 6,
+            "parameterId": null
+          },
+          "mask": {
+            "source": "invalid",
+            "literal": null,
+            "parameterId": null
+          },
+          "timeoutMs": 1000
+        },
+        {
+          "kind": "wait-masked-equals",
+          "signalId": "org.embedlabs.inovance.sv630n.statusword",
+          "value": {
+            "source": "literal",
+            "literal": 33,
+            "parameterId": null
+          },
+          "mask": {
+            "source": "literal",
+            "literal": 111,
+            "parameterId": null
+          },
+          "timeoutMs": 3000
+        },
+        {
+          "kind": "write-signal",
+          "signalId": "org.embedlabs.inovance.sv630n.controlword",
+          "value": {
+            "source": "literal",
+            "literal": 7,
+            "parameterId": null
+          },
+          "mask": {
+            "source": "invalid",
+            "literal": null,
+            "parameterId": null
+          },
+          "timeoutMs": 1000
+        },
+        {
+          "kind": "wait-masked-equals",
+          "signalId": "org.embedlabs.inovance.sv630n.statusword",
+          "value": {
+            "source": "literal",
+            "literal": 35,
+            "parameterId": null
+          },
+          "mask": {
+            "source": "literal",
+            "literal": 111,
+            "parameterId": null
+          },
+          "timeoutMs": 3000
+        },
+        {
+          "kind": "write-signal",
+          "signalId": "org.embedlabs.inovance.sv630n.controlword",
+          "value": {
+            "source": "literal",
+            "literal": 15,
+            "parameterId": null
+          },
+          "mask": {
+            "source": "invalid",
+            "literal": null,
+            "parameterId": null
+          },
+          "timeoutMs": 1000
+        },
+        {
+          "kind": "wait-masked-equals",
+          "signalId": "org.embedlabs.inovance.sv630n.statusword",
+          "value": {
+            "source": "literal",
+            "literal": 39,
+            "parameterId": null
+          },
+          "mask": {
+            "source": "literal",
+            "literal": 111,
+            "parameterId": null
+          },
+          "timeoutMs": 3000
+        }
+      ]
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.action.stop-csv",
+      "displayName": "Stop CSV (Candidate, disabled)",
+      "description": "Finite zero-target and feedback-bounded stop candidate. Its raw-unit threshold requires project qualification.",
+      "enabled": false,
+      "requiresExclusiveControl": true,
+      "requiresDc": true,
+      "holdToRun": true,
+      "commandTtlMs": 0,
+      "runtimeConditions": [
+        "org.embedlabs.runtime.active-profile-bound",
+        "org.embedlabs.runtime.fault-free",
+        "org.embedlabs.runtime.dc-locked"
+      ],
+      "failureAction": "controlled-stop",
+      "timeoutAction": "controlled-stop",
+      "requiredSignals": [
+        "org.embedlabs.inovance.sv630n.controlword",
+        "org.embedlabs.inovance.sv630n.statusword",
+        "org.embedlabs.inovance.sv630n.target-velocity",
+        "org.embedlabs.inovance.sv630n.actual-velocity"
+      ],
+      "parameters": [
+        {
+          "id": "velocityThreshold",
+          "displayName": "Stopped velocity threshold",
+          "description": "Maximum absolute actual velocity accepted as stopped, in unqualified raw drive units.",
+          "dataType": "integer32",
+          "value": {
+            "unit": "raw-drive-unit",
+            "scale": 1,
+            "offset": 0,
+            "minimum": 0,
+            "maximum": null,
+            "step": 1,
+            "enumValues": []
+          },
+          "required": true,
+          "defaultValue": null
+        }
+      ],
+      "steps": [
+        {
+          "kind": "write-signal",
+          "signalId": "org.embedlabs.inovance.sv630n.target-velocity",
+          "value": {
+            "source": "literal",
+            "literal": 0,
+            "parameterId": null
+          },
+          "mask": {
+            "source": "invalid",
+            "literal": null,
+            "parameterId": null
+          },
+          "timeoutMs": 1000
+        },
+        {
+          "kind": "wait-absolute-at-most",
+          "signalId": "org.embedlabs.inovance.sv630n.actual-velocity",
+          "value": {
+            "source": "parameter",
+            "literal": null,
+            "parameterId": "velocityThreshold"
+          },
+          "mask": {
+            "source": "invalid",
+            "literal": null,
+            "parameterId": null
+          },
+          "timeoutMs": 5000
+        },
+        {
+          "kind": "write-signal",
+          "signalId": "org.embedlabs.inovance.sv630n.controlword",
+          "value": {
+            "source": "literal",
+            "literal": 7,
+            "parameterId": null
+          },
+          "mask": {
+            "source": "invalid",
+            "literal": null,
+            "parameterId": null
+          },
+          "timeoutMs": 1000
+        },
+        {
+          "kind": "wait-masked-equals",
+          "signalId": "org.embedlabs.inovance.sv630n.statusword",
+          "value": {
+            "source": "literal",
+            "literal": 35,
+            "parameterId": null
+          },
+          "mask": {
+            "source": "literal",
+            "literal": 111,
+            "parameterId": null
+          },
+          "timeoutMs": 3000
+        }
+      ]
+    }
+  ]
+}

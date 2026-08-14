@@ -1,6 +1,7 @@
 set(resource_directories
   android
   cplusplus
+  ethercat
   glsl
   indexer_preincludes
   jsonschemas

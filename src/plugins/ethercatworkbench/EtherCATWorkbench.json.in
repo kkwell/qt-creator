@@ -1,0 +1,14 @@
+{
+    "Id" : "ethercatworkbench",
+    "DisplayName" : "EtherCAT Workbench",
+    "Name" : "EtherCATWorkbench",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "kvell",
+    "Vendor" : "Kvell",
+    "Copyright" : "(C) 2026 Kvell",
+    "License" : [ "Commercial Usage" ],
+    "Category" : "EtherCAT",
+    "Description" : "Unified EtherCAT engineering, commissioning, runtime, and semantic control workspace.",
+    ${IDE_PLUGIN_DEPENDENCIES}
+}

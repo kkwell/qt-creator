@@ -1,0 +1,14 @@
+{
+    "Id" : "ethercatdevices",
+    "DisplayName" : "EtherCAT Devices",
+    "Name" : "EtherCATDevices",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "kvell",
+    "Vendor" : "Kvell",
+    "Copyright" : "(C) 2026 Kvell",
+    "License" : [ "Commercial Usage" ],
+    "Category" : "EtherCAT",
+    "Description" : "Offline ESI import, indexing, and EtherCAT device descriptions.",
+    ${IDE_PLUGIN_DEPENDENCIES}
+}

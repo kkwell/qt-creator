@@ -178,6 +178,8 @@ add_qtc_plugin(Core
     iversioncontrol.h
     iwelcomepage.cpp
     iwelcomepage.h
+    ieasyboardpage.cpp
+    ieasyboardpage.h
     iwizardfactory.cpp
     iwizardfactory.h
     jsexpander.cpp

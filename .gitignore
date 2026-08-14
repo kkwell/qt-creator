@@ -292,3 +292,7 @@ tmp/
 /*-debug/
 /*-release/
 /out/
+/*.qtc/
+/qtcsettings.*
+/CMakeFiles/
+/CMakeCache.*

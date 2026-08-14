@@ -1,0 +1,14 @@
+{
+    "Id" : "ethercatdiagnostics",
+    "DisplayName" : "EtherCAT Diagnostics",
+    "Name" : "EtherCATDiagnostics",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "kvell",
+    "Vendor" : "Kvell",
+    "Copyright" : "(C) 2026 Kvell",
+    "License" : [ "Commercial Usage" ],
+    "Category" : "EtherCAT",
+    "Description" : "Local Mock EtherCAT state, alarm, and performance diagnostics.",
+    ${IDE_PLUGIN_DEPENDENCIES}
+}

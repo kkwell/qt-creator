@@ -31,8 +31,10 @@ QtcProduct {
     // build systems in mind.
     bundle.infoPlist: ({
         "NSHumanReadableCopyright": qtc.ide_copyright_string,
+        "CFBundleDisplayName": qtc.ide_display_name,
         "CFBundleExecutable": qtc.ide_app_target,
         "CFBundleIdentifier": qtc.ide_bundle_identifier,
+        "CFBundleName": qtc.ide_display_name,
         "CFBundleVersion": version
     })
 
@@ -71,7 +73,7 @@ QtcProduct {
                                    "RC_VERSION_STRING=" + qtc.qtcreator_display_version,
                                    "RC_COPYRIGHT=" + qtc.ide_copyright_string.replace(/ /g, "\\x20"),
                                    "RC_ICON_PATH=."])
-        files: "qtcreator.rc"
+        files: ["qtcreator.rc", "embedlabs.ico"]
     }
 
     Group {
@@ -85,8 +87,16 @@ QtcProduct {
     Group {
         name: "main_macos"
         condition: qbs.targetOS.contains("macos")
+        files: ["main_mac.mm"]
+    }
+
+    Group {
+        name: "macOS application resources"
+        condition: qbs.targetOS.contains("macos")
         files: [
-            "main_mac.mm"
+            "macos/legacy/qtcreator.icns",
+            "macos/qtcreator.icon/Assets/icon.png"
         ]
+        fileTags: ["bundle.input.resources"]
     }
 }

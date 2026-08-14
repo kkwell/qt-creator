@@ -1,0 +1,5429 @@
+// Copyright (C) 2026 Kvell
+
+#include "workbenchcontroller.h"
+
+#include "esiconfigurationfactory.h"
+#include "ethercatworkbenchtr.h"
+
+#include <coreplugin/messagemanager.h>
+
+#include <ethercatcore/providerregistry.h>
+#include <ethercatcore/runtimepackagecompilerprovider.h>
+#include <ethercatcore/runtimepackagecompilerprojectrequestbuilder.h>
+#include <ethercatcore/scanproviderselectionservice.h>
+#include <ethercatcore/selectionservice.h>
+#include <ethercatcore/topologyservice.h>
+
+#include <extensionsystem/pluginmanager.h>
+
+#include <ethercatproject/ethercatprojectconstants.h>
+
+#include <projectexplorer/project.h>
+#include <projectexplorer/projectmanager.h>
+
+#include <utils/qtcassert.h>
+#include <utils/qtcsettings.h>
+
+#include <QHash>
+#include <QScopedValueRollback>
+#include <QSet>
+#include <QStringList>
+#include <QTimer>
+#include <QVariant>
+
+#include <algorithm>
+#include <limits>
+#include <utility>
+
+namespace EtherCAT::Workbench::Internal {
+
+std::optional<ProviderStartupOutput> providerStartupOutput(
+    const Core::ProviderStartupDiagnostic &diagnostic)
+{
+    if (!diagnostic.isValid())
+        return std::nullopt;
+
+    ProviderStartupOutput output;
+    output.message = diagnostic.message.trimmed();
+    switch (diagnostic.severity) {
+    case Core::ProviderDiagnosticSeverity::Information:
+        output.level = ControllerOutputLevel::Information;
+        break;
+    case Core::ProviderDiagnosticSeverity::Warning:
+        output.level = ControllerOutputLevel::Warning;
+        break;
+    case Core::ProviderDiagnosticSeverity::Error:
+        output.level = ControllerOutputLevel::Error;
+        output.reveal = true;
+        break;
+    }
+    return output;
+}
+
+QList<ProviderStartupOutput> providerStartupOutput(Core::Provider *provider)
+{
+    auto adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider);
+    if (!adapterProvider)
+        return {};
+
+    QList<ProviderStartupOutput> result;
+    for (const Core::ProviderStartupDiagnostic &diagnostic : adapterProvider->startupDiagnostics()) {
+        if (const auto output = providerStartupOutput(diagnostic))
+            result.append(*output);
+    }
+    return result;
+}
+
+struct ActiveMasterContext
+{
+    Data::ProjectSnapshot project;
+    Data::NodeId masterId;
+    QList<Data::OfflineSlaveConfiguration> slaves;
+};
+
+struct SelectedSlaveContext : ActiveMasterContext
+{
+    Data::NodeId slaveId;
+    int index = -1;
+};
+
+static QList<Data::OfflineSlaveConfiguration> slavesForMaster(
+    const Data::ProjectSnapshot &project, const Data::NodeId &masterId)
+{
+    QList<Data::OfflineSlaveConfiguration> result;
+    for (const Data::OfflineSlaveConfiguration &slave : project.slaves) {
+        if (slave.masterId == masterId)
+            result.append(slave);
+    }
+    std::sort(result.begin(), result.end(), [](const auto &left, const auto &right) {
+        return left.position < right.position;
+    });
+    return result;
+}
+
+static void normalizePositions(QList<Data::OfflineSlaveConfiguration> *slaves)
+{
+    for (int position = 0; position < slaves->size(); ++position)
+        (*slaves)[position].position = position;
+}
+
+static std::optional<ActiveMasterContext> activeMasterContext(
+    Core::ProjectService *projectService, const Data::NodeId &requestedMasterId = {})
+{
+    if (!projectService)
+        return std::nullopt;
+    const std::optional<Data::ProjectSnapshot> project = projectService->project(
+        projectService->activeProjectId());
+    if (!project || !project->valid)
+        return std::nullopt;
+    const auto master = std::find_if(
+        project->nodes.cbegin(),
+        project->nodes.cend(),
+        [&requestedMasterId](const Data::ProjectNodeSnapshot &node) {
+            return node.kind == Data::ProjectNodeKind::Master
+                   && (requestedMasterId.isNull() || node.id == requestedMasterId);
+        });
+    if (master == project->nodes.cend())
+        return std::nullopt;
+    return ActiveMasterContext{*project, master->id, slavesForMaster(*project, master->id)};
+}
+
+static std::optional<SelectedSlaveContext> selectedSlaveContext(
+    const WorkbenchTreeModel &treeModel,
+    Core::SelectionService *selectionService,
+    Core::ProjectService *projectService)
+{
+    if (!selectionService || !projectService)
+        return std::nullopt;
+    const Data::NodeId slaveId = selectionService->currentNodeId();
+    const Core::PropertyPageContext context = treeModel.contextForNodeId(slaveId);
+    if (context.nodeKind != Core::WorkbenchNodeKind::ConfiguredSlave)
+        return std::nullopt;
+    const std::optional<Data::ProjectSnapshot> project = projectService->project(context.projectId);
+    if (!project || !project->valid)
+        return std::nullopt;
+    const auto selected = std::find_if(
+        project->slaves.cbegin(), project->slaves.cend(), [&slaveId](const auto &slave) {
+            return slave.id == slaveId;
+        });
+    if (selected == project->slaves.cend())
+        return std::nullopt;
+    QList<Data::OfflineSlaveConfiguration> slaves = slavesForMaster(*project, selected->masterId);
+    const auto inMaster = std::find_if(slaves.cbegin(), slaves.cend(), [&slaveId](const auto &slave) {
+        return slave.id == slaveId;
+    });
+    if (inMaster == slaves.cend())
+        return std::nullopt;
+    return SelectedSlaveContext{
+        {*project, selected->masterId, slaves}, slaveId, int(inMaster - slaves.cbegin())};
+}
+
+static std::optional<Data::ProjectSnapshot> selectedProject(
+    const WorkbenchTreeModel &treeModel,
+    Core::SelectionService *selectionService,
+    Core::ProjectService *projectService)
+{
+    if (!selectionService || !projectService)
+        return std::nullopt;
+    const Core::PropertyPageContext context = treeModel.contextForNodeId(
+        selectionService->currentNodeId());
+    if (context.nodeKind != Core::WorkbenchNodeKind::Project)
+        return std::nullopt;
+    const std::optional<Data::ProjectSnapshot> project = projectService->project(context.projectId);
+    if (!project || project->id != context.nodeId)
+        return std::nullopt;
+    return project;
+}
+
+static QString uniqueSlaveName(
+    const QString &requestedName, const QList<Data::OfflineSlaveConfiguration> &slaves)
+{
+    const QString baseName = requestedName.trimmed().isEmpty() ? Tr::tr("EtherCAT Device")
+                                                               : requestedName.trimmed();
+    const auto isUsed = [&slaves](const QString &candidate) {
+        return std::any_of(slaves.cbegin(), slaves.cend(), [&candidate](const auto &slave) {
+            return slave.name.compare(candidate, Qt::CaseInsensitive) == 0;
+        });
+    };
+    if (!isUsed(baseName))
+        return baseName;
+    for (int suffix = 2;; ++suffix) {
+        const QString candidate = Tr::tr("%1 (%2)").arg(baseName).arg(suffix);
+        if (!isUsed(candidate))
+            return candidate;
+    }
+}
+
+struct CurrentBusApplyPlan
+{
+    Data::ControllerConnectionScope scope;
+    QList<Data::OfflineSlaveConfiguration> currentSlaves;
+    QList<Data::OfflineSlaveConfiguration> candidateSlaves;
+    int esiMatches = 0;
+    int unknownDevices = 0;
+    int ambiguousEsiMatches = 0;
+    int unsupportedEsiMatches = 0;
+    int adapterSelectionWarnings = 0;
+    int preservedConfigurations = 0;
+    int removedConfigurations = 0;
+};
+
+static Data::DeviceIdentity controllerIdentity(const Data::ControllerTopologySlave &slave)
+{
+    return {slave.vendorId, slave.productCode, slave.revision};
+}
+
+static bool configurationIsEmpty(const Data::OfflineSlaveConfiguration &slave)
+{
+    return slave.processData == Data::ProcessDataConfiguration{}
+           && slave.startup == Data::StartupConfiguration{} && slave.dc == Data::DcConfiguration{};
+}
+
+static bool adapterSelectionIsEmpty(const Data::DeviceAdapterProjectSelection &selection)
+{
+    return selection.adapterId.value.isEmpty() && selection.adapterVersion.isEmpty()
+           && selection.adapterContentSha256.isEmpty() && selection.processDataProfileId.isEmpty()
+           && selection.moduleAssignments.isEmpty();
+}
+
+static bool adapterManifestMatchesDevice(
+    const Data::DeviceAdapterManifest &manifest, const Data::DeviceDescription &device)
+{
+    const Data::DeviceIdentity &identity = device.summary.identity;
+    return manifest.match.vendorId == identity.vendorId
+           && manifest.match.productCode == identity.productCode
+           && identity.revisionNumber >= manifest.match.minimumRevision
+           && identity.revisionNumber <= manifest.match.maximumRevision
+           && manifest.match.exactEsiSha256 == device.sourceSha256;
+}
+
+static bool adapterProfileMatchesProcessImage(
+    const Data::ProcessDataProfile &profile, const Data::ProcessImagePreview &processImage)
+{
+    QSet<quint16> rxPdos;
+    for (const Data::ProcessImageEntry &entry : processImage.outputs.entries)
+        rxPdos.insert(entry.pdoIndex);
+    QSet<quint16> txPdos;
+    for (const Data::ProcessImageEntry &entry : processImage.inputs.entries)
+        txPdos.insert(entry.pdoIndex);
+    return std::all_of(
+               profile.rxPdoIndices.cbegin(),
+               profile.rxPdoIndices.cend(),
+               [&rxPdos](quint16 index) { return rxPdos.contains(index); })
+           && std::all_of(
+               profile.txPdoIndices.cbegin(),
+               profile.txPdoIndices.cend(),
+               [&txPdos](quint16 index) { return txPdos.contains(index); });
+}
+
+struct CurrentBusAdapterSelection
+{
+    Data::DeviceAdapterProjectSelection selection;
+    bool productionTrusted = false;
+};
+
+static std::optional<CurrentBusAdapterSelection> resolveCurrentBusAdapterSelection(
+    const Data::OfflineSlaveConfiguration &slave,
+    const Data::DeviceDescription &device,
+    Core::ProviderRegistry *providerRegistry)
+{
+    if (!providerRegistry || device.sourceSha256.size() != 32)
+        return std::nullopt;
+
+    const Data::ConfigurationValidation validation = Data::validateProcessDataConfiguration(
+        slave.processData);
+    if (validation.hasErrors())
+        return std::nullopt;
+
+    const Data::DeviceAdapterProjectSelection &savedSelection = slave.adapterSelection;
+    const bool hasCompleteSavedSelection = !adapterSelectionIsEmpty(savedSelection)
+                                           && !savedSelection.adapterId.value.isEmpty()
+                                           && !savedSelection.adapterVersion.isEmpty()
+                                           && savedSelection.adapterContentSha256.size() == 32
+                                           && !savedSelection.processDataProfileId.isEmpty();
+
+    Data::DeviceAdapterResolutionRequest request;
+    request.slaveId = slave.id;
+    request.device = device;
+    request.processImage = validation.processImage;
+    request.allowCandidate = true;
+    request.moduleAssignments = savedSelection.moduleAssignments;
+    if (hasCompleteSavedSelection) {
+        request.processDataProfileId = savedSelection.processDataProfileId;
+    }
+
+    QList<CurrentBusAdapterSelection> matches;
+    for (Core::Provider *candidate :
+         providerRegistry->providers(Core::ProviderKind::DeviceAdapter)) {
+        auto *provider = qobject_cast<Core::DeviceAdapterProvider *>(candidate);
+        if (!provider || !provider->isAvailable())
+            continue;
+
+        for (const Data::DeviceAdapterManifest &manifest : provider->adapterManifests()) {
+            const bool supportedContract
+                = manifest.contractVersion == Data::DeviceAdapterContractVersion::V3
+                  || (hasCompleteSavedSelection
+                      && manifest.contractVersion == Data::DeviceAdapterContractVersion::V4);
+            if (!supportedContract
+                || (manifest.qualification != Data::DeviceAdapterQualification::Candidate
+                    && manifest.qualification != Data::DeviceAdapterQualification::Qualified)
+                || manifest.contentSha256.size() != 32
+                || !adapterManifestMatchesDevice(manifest, device)
+                || manifest.controllerAdapterTarget.adapterId.isEmpty()
+                || manifest.controllerAdapterTarget.adapterVersion.isEmpty()
+                || manifest.controllerAdapterTarget.adapterSha256.size() != 32
+                || manifest.controllerAdapterTarget.esiSha256 != device.sourceSha256) {
+                continue;
+            }
+            const std::optional<Data::DeviceAdapterManifest> canonicalManifest
+                = provider->adapterManifest(manifest.id, manifest.version);
+            if (!canonicalManifest || *canonicalManifest != manifest)
+                continue;
+            if (hasCompleteSavedSelection
+                && (manifest.id != savedSelection.adapterId
+                    || manifest.version != savedSelection.adapterVersion
+                    || manifest.contentSha256 != savedSelection.adapterContentSha256)) {
+                continue;
+            }
+
+            Data::DeviceAdapterResolutionRequest manifestRequest = request;
+            manifestRequest.expectedAdapterId = manifest.id;
+            manifestRequest.expectedAdapterVersion = manifest.version;
+            manifestRequest.expectedAdapterContentSha256 = manifest.contentSha256;
+            const Data::DeviceAdapterResolutionResult resolution = provider->resolveDevice(
+                manifestRequest);
+            if (!resolution.resolved)
+                continue;
+
+            const Data::ResolvedDeviceModel &model = resolution.model;
+            const bool profileExists = std::any_of(
+                manifest.processDataProfiles.cbegin(),
+                manifest.processDataProfiles.cend(),
+                [&model, &validation](const Data::ProcessDataProfile &profile) {
+                    return profile.id == model.processDataProfileId
+                           && adapterProfileMatchesProcessImage(profile, validation.processImage);
+                });
+            const bool exactSavedSelection
+                = !hasCompleteSavedSelection
+                  || (model.adapterId == savedSelection.adapterId
+                      && model.adapterVersion == savedSelection.adapterVersion
+                      && model.adapterContentSha256 == savedSelection.adapterContentSha256
+                      && model.processDataProfileId == savedSelection.processDataProfileId
+                      && model.moduleAssignments == savedSelection.moduleAssignments);
+            const bool exactResolution
+                = manifest.id == model.adapterId && manifest.version == model.adapterVersion
+                  && manifest.contentSha256 == model.adapterContentSha256
+                  && model.slaveId == slave.id && model.identity == slave.identity
+                  && model.esiSha256 == device.sourceSha256
+                  && model.qualification == manifest.qualification
+                  && !model.processDataProfileId.isEmpty() && profileExists && model.complete
+                  && (manifest.moduleProfiles.isEmpty() || !model.moduleAssignments.isEmpty())
+                  && exactSavedSelection;
+            if (!exactResolution)
+                continue;
+
+            matches.append(
+                {{manifest.id,
+                  manifest.version,
+                  manifest.contentSha256,
+                  model.processDataProfileId,
+                  model.moduleAssignments},
+                 manifest.qualification == Data::DeviceAdapterQualification::Qualified
+                     && manifest.signatureVerified && manifest.realHardwareAllowed
+                     && manifest.provenance.sourceSha256 == device.sourceSha256});
+        }
+    }
+
+    if (matches.size() != 1)
+        return std::nullopt;
+    return matches.constFirst();
+}
+
+static std::optional<Data::DeviceDescription> matchingDeviceDescription(
+    Core::DeviceRepositoryProvider *repository,
+    const QList<Data::DeviceSummary> &devices,
+    const Data::ControllerTopologySlave &slave,
+    const Data::OfflineSlaveConfiguration *existing,
+    int *ambiguousMatches,
+    int *unsupportedMatches)
+{
+    if (!repository)
+        return std::nullopt;
+
+    const Data::DeviceIdentity identity = controllerIdentity(slave);
+    if (existing && !existing->deviceDescriptionId.isNull()) {
+        const std::optional<Data::DeviceDescription> configured = repository->device(
+            existing->deviceDescriptionId);
+        if (configured && configured->summary.supported
+            && configured->summary.identity == identity) {
+            return configured;
+        }
+    }
+
+    QList<Data::DeviceSummary> matches;
+    for (const Data::DeviceSummary &device : devices) {
+        if (device.identity == identity)
+            matches.append(device);
+    }
+    if (matches.size() > 1) {
+        if (ambiguousMatches)
+            ++*ambiguousMatches;
+        return std::nullopt;
+    }
+    if (matches.isEmpty())
+        return std::nullopt;
+    if (!matches.constFirst().supported) {
+        if (unsupportedMatches)
+            ++*unsupportedMatches;
+        return std::nullopt;
+    }
+    return repository->device(matches.constFirst().id);
+}
+
+#ifdef WITH_TESTS
+std::optional<Data::DeviceDescription> WorkbenchController::matchingDeviceDescriptionForCurrentBusTest(
+    Core::DeviceRepositoryProvider *repository,
+    const QList<Data::DeviceSummary> &devices,
+    const Data::ControllerTopologySlave &slave,
+    const Data::OfflineSlaveConfiguration *existing,
+    int *ambiguousMatches,
+    int *unsupportedMatches)
+{
+    return matchingDeviceDescription(
+        repository, devices, slave, existing, ambiguousMatches, unsupportedMatches);
+}
+#endif
+
+enum class FreeRunSupport {
+    Unknown,
+    Supported,
+    Unsupported,
+};
+
+struct FreeRunCompatibilityReport
+{
+    QStringList incompatibleDevices;
+    QStringList unknownDevices;
+    int compatibleDevices = 0;
+
+    bool hasDevices() const
+    {
+        return compatibleDevices || !incompatibleDevices.isEmpty() || !unknownDevices.isEmpty();
+    }
+};
+
+static FreeRunSupport freeRunSupport(const Data::DeviceDescription &device)
+{
+    const Data::SynchronizationTypeCapabilities &types = device.synchronizationTypes;
+    const bool needsOutputTypes = !device.rxPdos.isEmpty();
+    const bool needsInputTypes = !device.txPdos.isEmpty();
+    const bool considerOutput = needsOutputTypes || (!needsOutputTypes && !needsInputTypes);
+    const bool considerInput = needsInputTypes || (!needsOutputTypes && !needsInputTypes);
+    bool declared = false;
+    bool missingRequiredDeclaration = false;
+
+    const auto consider =
+        [&declared,
+         &missingRequiredDeclaration](bool required, bool typesDeclared, quint16 supportedTypes) {
+            if (!required)
+                return FreeRunSupport::Supported;
+            if (!typesDeclared) {
+                missingRequiredDeclaration = true;
+                return FreeRunSupport::Unknown;
+            }
+            declared = true;
+            return supportedTypes & 0x0001 ? FreeRunSupport::Supported
+                                           : FreeRunSupport::Unsupported;
+        };
+
+    if (consider(considerOutput, types.outputTypesDeclared, types.outputSupportedTypes)
+        == FreeRunSupport::Unsupported) {
+        return FreeRunSupport::Unsupported;
+    }
+    if (consider(considerInput, types.inputTypesDeclared, types.inputSupportedTypes)
+        == FreeRunSupport::Unsupported) {
+        return FreeRunSupport::Unsupported;
+    }
+    return declared && !missingRequiredDeclaration ? FreeRunSupport::Supported
+                                                   : FreeRunSupport::Unknown;
+}
+
+static QString topologyDeviceLabel(
+    const Data::ControllerTopologySlave &slave, const std::optional<Data::DeviceDescription> &device)
+{
+    QString name;
+    if (device) {
+        name = device->summary.name.trimmed();
+        if (name.isEmpty())
+            name = device->summary.typeName.trimmed();
+    }
+    if (name.isEmpty()) {
+        name = Tr::tr("device 0x%1/0x%2/0x%3")
+                   .arg(slave.vendorId, 8, 16, QLatin1Char('0'))
+                   .arg(slave.productCode, 8, 16, QLatin1Char('0'))
+                   .arg(slave.revision, 8, 16, QLatin1Char('0'));
+    }
+    return Tr::tr("%1 at position %2 (station 0x%3)")
+        .arg(name)
+        .arg(slave.position)
+        .arg(slave.stationAddress, 4, 16, QLatin1Char('0'));
+}
+
+static FreeRunCompatibilityReport freeRunCompatibilityReport(
+    const Data::ControllerTopologySnapshot &topology, Core::DeviceRepositoryProvider *repository)
+{
+    FreeRunCompatibilityReport report;
+    const QList<Data::DeviceSummary> devices = repository ? repository->devices()
+                                                          : QList<Data::DeviceSummary>();
+    for (const Data::ControllerTopologySlave &slave : topology.slaves) {
+        const std::optional<Data::DeviceDescription> device
+            = matchingDeviceDescription(repository, devices, slave, nullptr, nullptr, nullptr);
+        const QString label = topologyDeviceLabel(slave, device);
+        switch (device ? freeRunSupport(*device) : FreeRunSupport::Unknown) {
+        case FreeRunSupport::Supported:
+            ++report.compatibleDevices;
+            break;
+        case FreeRunSupport::Unsupported:
+            report.incompatibleDevices.append(label);
+            break;
+        case FreeRunSupport::Unknown:
+            report.unknownDevices.append(label);
+            break;
+        }
+    }
+    return report;
+}
+
+static FreeRunCompatibilityReport freeRunCompatibilityReport(
+    const QList<Data::OfflineSlaveConfiguration> &slaves, Core::DeviceRepositoryProvider *repository)
+{
+    FreeRunCompatibilityReport report;
+    for (const Data::OfflineSlaveConfiguration &slave : slaves) {
+        const std::optional<Data::DeviceDescription> device
+            = repository && !slave.deviceDescriptionId.isNull()
+                  ? repository->device(slave.deviceDescriptionId)
+                  : std::nullopt;
+        const QString label = slave.name.trimmed().isEmpty()
+                                  ? Tr::tr("device at position %1").arg(slave.position)
+                                  : Tr::tr("%1 at position %2").arg(slave.name).arg(slave.position);
+        switch (device ? freeRunSupport(*device) : FreeRunSupport::Unknown) {
+        case FreeRunSupport::Supported:
+            ++report.compatibleDevices;
+            break;
+        case FreeRunSupport::Unsupported:
+            report.incompatibleDevices.append(label);
+            break;
+        case FreeRunSupport::Unknown:
+            report.unknownDevices.append(label);
+            break;
+        }
+    }
+    return report;
+}
+
+static QString freeRunUnavailableReason(const FreeRunCompatibilityReport &report)
+{
+    if (!report.hasDevices()) {
+        return Tr::tr("Scan the EtherCAT bus or configure its slaves before selecting FreeRun.");
+    }
+    if (!report.incompatibleDevices.isEmpty()) {
+        return Tr::tr("FreeRun is not supported by %1. Select Distributed Clocks for this bus.")
+            .arg(report.incompatibleDevices.join(Tr::tr("; ")));
+    }
+    if (!report.unknownDevices.isEmpty()) {
+        return Tr::tr(
+                   "FreeRun compatibility cannot be verified for %1. Import matching ESI XML "
+                   "files that declare object 0x1C32/0x1C33 subindex 4 before selecting FreeRun.")
+            .arg(report.unknownDevices.join(Tr::tr("; ")));
+    }
+    return {};
+}
+
+static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
+    const Data::ControllerConnectionScope &scope,
+    const Data::ProjectSnapshot &project,
+    const Data::ControllerTopologySnapshot &topology,
+    Core::DeviceRepositoryProvider *repository,
+    Core::ProviderRegistry *providerRegistry)
+{
+    if (!project.valid || project.id != scope.projectId) {
+        return Utils::ResultError(
+            Tr::tr("The selected EtherCAT project is invalid or no longer available."));
+    }
+    if (topology.result != 0) {
+        return Utils::ResultError(Tr::tr("The current bus scan did not complete successfully."));
+    }
+    if (!topology.respondingCount || topology.slaves.isEmpty()) {
+        return Utils::ResultError(
+            Tr::tr("The current bus scan contains no responding EtherCAT devices."));
+    }
+    if (topology.respondingCount != quint32(topology.slaves.size())) {
+        return Utils::ResultError(
+            Tr::tr("The current bus scan is incomplete and cannot configure the project."));
+    }
+
+    QList<Data::ControllerTopologySlave> sortedTopology = topology.slaves;
+    std::sort(
+        sortedTopology.begin(),
+        sortedTopology.end(),
+        [](const Data::ControllerTopologySlave &left, const Data::ControllerTopologySlave &right) {
+            return left.position < right.position;
+        });
+    QSet<quint32> positions;
+    QHash<quint16, quint32> stationPositions;
+    const bool hasTopologyEvidence = topology.topologyCaptureSequence != 0;
+    for (const Data::ControllerTopologySlave &slave : std::as_const(sortedTopology)) {
+        if (slave.position > quint32(std::numeric_limits<int>::max())
+            || positions.contains(slave.position)) {
+            return Utils::ResultError(
+                Tr::tr("The current bus scan contains an invalid or duplicate position."));
+        }
+        if (!slave.vendorId || !slave.productCode) {
+            return Utils::ResultError(
+                Tr::tr("A detected EtherCAT device has an incomplete identity."));
+        }
+        if (!slave.stationAddress) {
+            return Utils::ResultError(
+                Tr::tr("The detected EtherCAT device at bus position %1 has station address 0.")
+                    .arg(slave.position));
+        }
+        if (hasTopologyEvidence
+            && (slave.aliasValidity != Data::ControllerTopologyEvidenceValidity::Valid
+                || slave.aliasProvenance
+                       != Data::ControllerTopologyEvidenceProvenance::Observed
+                || slave.aliasSource != Data::ControllerTopologyEvidenceSource::EscStationAlias
+                || (slave.moduleValidity != Data::ControllerTopologyEvidenceValidity::Valid
+                    && slave.moduleValidity
+                           != Data::ControllerTopologyEvidenceValidity::Unavailable)
+                || slave.moduleProvenance
+                       != Data::ControllerTopologyEvidenceProvenance::DeviceReported
+                || (slave.moduleSource != Data::ControllerTopologyEvidenceSource::SiiMailbox
+                    && slave.moduleSource
+                           != Data::ControllerTopologyEvidenceSource::CoeDetectedModules))) {
+            return Utils::ResultError(
+                Tr::tr("A detected EtherCAT device has incomplete alias or module evidence."));
+        }
+        const auto duplicateStation = stationPositions.constFind(slave.stationAddress);
+        if (duplicateStation != stationPositions.cend()) {
+            return Utils::ResultError(
+                Tr::tr("Station address 0x%1 is used by bus positions %2 and %3.")
+                    .arg(slave.stationAddress, 4, 16, QLatin1Char('0'))
+                    .arg(*duplicateStation)
+                    .arg(slave.position));
+        }
+        positions.insert(slave.position);
+        stationPositions.insert(slave.stationAddress, slave.position);
+    }
+
+    CurrentBusApplyPlan plan;
+    plan.scope = scope;
+    plan.currentSlaves = slavesForMaster(project, scope.masterId);
+    const QList<Data::DeviceSummary> devices = repository ? repository->devices()
+                                                          : QList<Data::DeviceSummary>();
+
+    for (const Data::ControllerTopologySlave &topologySlave : std::as_const(sortedTopology)) {
+        const int position = int(topologySlave.position);
+        const Data::DeviceIdentity identity = controllerIdentity(topologySlave);
+        const auto existing = std::find_if(
+            plan.currentSlaves.cbegin(),
+            plan.currentSlaves.cend(),
+            [position](const Data::OfflineSlaveConfiguration &slave) {
+                return slave.position == position;
+            });
+        const bool preserveExisting = existing != plan.currentSlaves.cend()
+                                      && existing->identity == identity;
+        const Data::OfflineSlaveConfiguration *existingPointer = preserveExisting ? &*existing
+                                                                                  : nullptr;
+        const std::optional<Data::DeviceDescription> device = matchingDeviceDescription(
+            repository,
+            devices,
+            topologySlave,
+            existingPointer,
+            &plan.ambiguousEsiMatches,
+            &plan.unsupportedEsiMatches);
+
+        Data::OfflineSlaveConfiguration candidate;
+        if (preserveExisting) {
+            candidate = *existing;
+            candidate.serialNumber = topologySlave.serial;
+            ++plan.preservedConfigurations;
+            if (device) {
+                candidate.deviceDescriptionId = device->summary.id;
+                if (configurationIsEmpty(candidate)) {
+                    candidate.processData = processDataDefaultsFromDevice(*device, candidate.id);
+                    candidate.startup = startupDefaultsFromDevice(*device, candidate.id);
+                    candidate.dc = dcDefaultsFromDevice(*device);
+                }
+            } else {
+                candidate.deviceDescriptionId = {};
+            }
+        } else if (device) {
+            const QString requestedName = device->summary.name.isEmpty() ? device->summary.typeName
+                                                                         : device->summary.name;
+            const Data::NodeId slaveId = Data::NodeId::create();
+            candidate = offlineSlaveFromDevice(
+                *device,
+                slaveId,
+                scope.masterId,
+                position,
+                uniqueSlaveName(requestedName, plan.candidateSlaves));
+            candidate.serialNumber = topologySlave.serial;
+        } else {
+            candidate.id = Data::NodeId::create();
+            candidate.masterId = scope.masterId;
+            candidate.position = position;
+            candidate.identity = identity;
+            candidate.serialNumber = topologySlave.serial;
+            candidate.name = uniqueSlaveName(
+                Tr::tr("Unknown EtherCAT Device %1").arg(position + 1), plan.candidateSlaves);
+        }
+        candidate.stationAddress = topologySlave.stationAddress;
+        if (hasTopologyEvidence) {
+            candidate.alias = topologySlave.alias;
+            candidate.adapterSelection.moduleAssignments.clear();
+            if (topologySlave.moduleValidity
+                == Data::ControllerTopologyEvidenceValidity::Valid) {
+                for (const Data::ControllerTopologyModuleEvidence &module :
+                     topologySlave.modules) {
+                    candidate.adapterSelection.moduleAssignments.append(
+                        {int(module.slot), module.moduleIdent, 0, 0});
+                }
+            }
+        }
+
+        if (device) {
+            candidate.esiSha256 = device->sourceSha256;
+            const std::optional<CurrentBusAdapterSelection> adapterSelection
+                = resolveCurrentBusAdapterSelection(candidate, *device, providerRegistry);
+            if (adapterSelection) {
+                candidate.adapterSelection = adapterSelection->selection;
+                if (!adapterSelection->productionTrusted)
+                    ++plan.adapterSelectionWarnings;
+            } else {
+                candidate.adapterSelection = {};
+                ++plan.adapterSelectionWarnings;
+            }
+            ++plan.esiMatches;
+        } else {
+            candidate.esiSha256 = {};
+            candidate.adapterSelection = {};
+            ++plan.unknownDevices;
+        }
+        plan.candidateSlaves.append(candidate);
+    }
+
+    plan.removedConfigurations = plan.currentSlaves.size() - plan.preservedConfigurations;
+    return plan;
+}
+
+static int diagnosticsProviderScore(Core::Provider *provider)
+{
+    const auto diagnostics = qobject_cast<Core::DiagnosticsProvider *>(provider);
+    if (!diagnostics)
+        return -1;
+    if (diagnostics->latestSnapshot())
+        return 2;
+    return diagnostics->streamState() == Data::DiagnosticsStreamState::Stopped ? 0 : 1;
+}
+
+static Core::DiagnosticsProvider *preferredDiagnosticsProvider(
+    Core::ProviderRegistry *registry, Core::Provider *excluding)
+{
+    if (!registry)
+        return nullptr;
+
+    QList<Core::DiagnosticsProvider *> providers;
+    for (Core::Provider *provider : registry->providers(Core::ProviderKind::Diagnostics)) {
+        if (provider == excluding)
+            continue;
+        if (auto *diagnostics = qobject_cast<Core::DiagnosticsProvider *>(provider))
+            providers.append(diagnostics);
+    }
+    std::sort(providers.begin(), providers.end(), [](auto *left, auto *right) {
+        const int leftScore = diagnosticsProviderScore(left);
+        const int rightScore = diagnosticsProviderScore(right);
+        const bool leftUsable = left->isAvailable() && leftScore >= 0;
+        const bool rightUsable = right->isAvailable() && rightScore >= 0;
+        if (leftUsable != rightUsable)
+            return leftUsable;
+        if (leftUsable && leftScore != rightScore)
+            return leftScore > rightScore;
+        return left->id().toString() < right->id().toString();
+    });
+    return providers.isEmpty() ? nullptr : providers.first();
+}
+
+static OptionalProviderPresentation optionalProviderPresentation(
+    Core::Provider *provider, Core::ProviderKind kind)
+{
+    if (!provider)
+        return {};
+    const bool expectedKind
+        = kind == Core::ProviderKind::Scan
+              ? qobject_cast<Core::ScanProvider *>(provider) != nullptr
+              : qobject_cast<Core::DiagnosticsProvider *>(provider) != nullptr;
+    const bool available = provider->isAvailable() && expectedKind;
+    OptionalProviderPresentation presentation{
+        available ? OptionalProviderState::Available : OptionalProviderState::Unavailable,
+        provider->displayName().trimmed()};
+    presentation.displayName = optionalProviderDisplayName(presentation, kind);
+    return presentation;
+}
+
+struct ScanProviderPreference
+{
+    Data::ControllerConnectionScope scope;
+    Utils::Id providerId;
+};
+
+static const Utils::Key scanProviderPreferencesKey(
+    "EtherCAT/Workbench/MockTopologyProviderBindings/v1");
+static constexpr qsizetype maximumScanProviderPreferenceCount = 128;
+
+static std::optional<QList<ScanProviderPreference>> scanProviderPreferences()
+{
+    if (!Utils::userSettings().contains(scanProviderPreferencesKey))
+        return QList<ScanProviderPreference>{};
+
+    const QVariant stored = Utils::userSettings().value(scanProviderPreferencesKey);
+    if (stored.typeId() != QMetaType::QVariantList)
+        return std::nullopt;
+    const QVariantList storedPreferences = stored.toList();
+    if (storedPreferences.size() > maximumScanProviderPreferenceCount)
+        return std::nullopt;
+
+    QList<ScanProviderPreference> result;
+    result.reserve(storedPreferences.size());
+    for (const QVariant &storedPreference : storedPreferences) {
+        if (storedPreference.typeId() != QMetaType::QStringList)
+            return std::nullopt;
+        const QStringList fields = storedPreference.toStringList();
+        if (fields.size() != 3)
+            return std::nullopt;
+
+        const ScanProviderPreference preference{
+            {Data::NodeId::fromString(fields.at(0)), Data::NodeId::fromString(fields.at(1))},
+            Utils::Id::fromSetting(fields.at(2)),
+        };
+        if (preference.scope.projectId.isNull() || preference.scope.masterId.isNull()
+            || !preference.providerId.isValid()
+            || preference.scope.projectId.toString() != fields.at(0)
+            || preference.scope.masterId.toString() != fields.at(1)
+            || preference.providerId.toString() != fields.at(2)
+            || std::any_of(
+                result.cbegin(),
+                result.cend(),
+                [&preference](const ScanProviderPreference &candidate) {
+                    return candidate.scope == preference.scope;
+                })) {
+            return std::nullopt;
+        }
+        result.append(preference);
+    }
+    return result;
+}
+
+static void writeScanProviderPreferences(const QList<ScanProviderPreference> &preferences)
+{
+    if (preferences.isEmpty()) {
+        Utils::userSettings().remove(scanProviderPreferencesKey);
+        return;
+    }
+
+    QVariantList storedPreferences;
+    storedPreferences.reserve(preferences.size());
+    for (const ScanProviderPreference &preference : preferences) {
+        storedPreferences.append(QStringList{
+            preference.scope.projectId.toString(),
+            preference.scope.masterId.toString(),
+            preference.providerId.toString(),
+        });
+    }
+    Utils::userSettings().setValue(scanProviderPreferencesKey, storedPreferences);
+}
+
+static void setScanProviderPreference(
+    const Data::ControllerConnectionScope &scope, Utils::Id providerId)
+{
+    QList<ScanProviderPreference> preferences = scanProviderPreferences().value_or(
+        QList<ScanProviderPreference>{});
+    preferences.removeIf([&scope](const ScanProviderPreference &preference) {
+        return preference.scope == scope;
+    });
+    preferences.append({scope, providerId});
+    while (preferences.size() > maximumScanProviderPreferenceCount)
+        preferences.removeFirst();
+    writeScanProviderPreferences(preferences);
+}
+
+static void clearScanProviderPreference(const Data::ControllerConnectionScope &scope)
+{
+    std::optional<QList<ScanProviderPreference>> preferences = scanProviderPreferences();
+    if (!preferences) {
+        Utils::userSettings().remove(scanProviderPreferencesKey);
+        return;
+    }
+    preferences->removeIf([&scope](const ScanProviderPreference &preference) {
+        return preference.scope == scope;
+    });
+    writeScanProviderPreferences(*preferences);
+}
+
+static bool connectionProfileUsable(const Data::ControllerConnectionProfile &profile)
+{
+    return !profile.id.isNull() && profile.configured && profile.supported;
+}
+
+static bool connectionStateLocksSelection(Data::ControllerConnectionState state)
+{
+    return state != Data::ControllerConnectionState::Disconnected
+           && state != Data::ControllerConnectionState::Failed;
+}
+
+static bool controllerPackageIsActive(const Data::ControllerConnectionSnapshot &snapshot)
+{
+    return snapshot.package && snapshot.package->activeSlot != Data::ControllerSlot::None
+           && snapshot.package->controllerState == Data::ControllerPackageState::Active
+           && snapshot.session
+           && snapshot.package->controllerBootId == snapshot.session->bootId;
+}
+
+struct ControllerStartCommandSelection
+{
+    std::optional<Data::ControllerControlCommand> command;
+    QString unavailableReason;
+};
+
+static ControllerStartCommandSelection controllerStartCommandSelection(
+    Core::ProjectService *projectService, const Data::ControllerConnectionScope &scope)
+{
+    if (!projectService)
+        return {{}, Tr::tr("The EtherCAT project service is unavailable.")};
+
+    const std::optional<Data::ProjectSnapshot> project = projectService->project(scope.projectId);
+    if (!project || !project->valid)
+        return {{}, Tr::tr("The EtherCAT project is not available.")};
+    const auto master = std::find_if(
+        project->nodes.cbegin(),
+        project->nodes.cend(),
+        [&scope](const Data::ProjectNodeSnapshot &node) {
+            return node.id == scope.masterId && node.kind == Data::ProjectNodeKind::Master;
+        });
+    if (master == project->nodes.cend())
+        return {{}, Tr::tr("The EtherCAT master is not available.")};
+
+    using Command = Data::ControllerControlCommand;
+    switch (project->masterConfiguration.timingMode) {
+    case Data::MasterTimingMode::FreeRun:
+        return {Command::StartFreeRun, {}};
+    case Data::MasterTimingMode::DistributedClocks:
+        return {Command::StartDistributedClocks, {}};
+    case Data::MasterTimingMode::Unassigned:
+        return {
+            {},
+            Tr::tr(
+                "Select FreeRun or Distributed Clocks for the EtherCAT Master before running.")};
+    }
+    return {{}, Tr::tr("The EtherCAT master timing mode is unsupported.")};
+}
+
+static bool hasUnmanagedEtherCATProject(Core::ProjectService *projectService)
+{
+    if (!projectService)
+        return false;
+    const QList<ProjectExplorer::Project *> projects = ProjectExplorer::ProjectManager::projects();
+    return std::any_of(
+        projects.cbegin(),
+        projects.cend(),
+        [projectService](const ProjectExplorer::Project *project) {
+            return project
+                   && project->type()
+                          == Utils::Id(::EtherCAT::Project::Constants::PROJECT_ID)
+                   && !projectService->managesProject(project);
+        });
+}
+
+static bool controllerControlLeaseOwnershipUnverified(
+    const Data::ControllerConnectionSnapshot &snapshot)
+{
+    return snapshot.session && !snapshot.session->ownsControlLease
+           && snapshot.session->controlLeaseOwnerSessionId != 0
+           && snapshot.session->controlLeaseOwnerSessionId == snapshot.session->sessionId;
+}
+
+static QString controllerControlStateUnavailableReason(
+    const Data::ControllerConnectionSnapshot &snapshot, Data::ControllerControlCommand command)
+{
+    const bool ownsControlLease = snapshot.session && snapshot.session->ownsControlLease;
+    const std::optional<Data::ControllerStateSummary> &controllerState = snapshot.controllerState;
+    using Command = Data::ControllerControlCommand;
+    using ServiceState = Data::ControllerServiceState;
+
+    const auto requireOwnedLease = [&snapshot, ownsControlLease] {
+        if (!snapshot.session)
+            return Tr::tr("The controller session has not been established.");
+        if (controllerControlLeaseOwnershipUnverified(snapshot)) {
+            return Tr::tr(
+                "The controller control lease ownership is unverified for this session.");
+        }
+        if (!ownsControlLease)
+            return Tr::tr("Acquire the controller control lease first.");
+        return QString();
+    };
+    const auto requireReadyState = [&controllerState] {
+        if (!controllerState)
+            return Tr::tr("The controller state is unavailable.");
+        if (!controllerState->ready)
+            return Tr::tr("The controller is not ready for control commands.");
+        return QString();
+    };
+    const auto requireActivePackage = [&snapshot] {
+        if (!controllerPackageIsActive(snapshot))
+            return Tr::tr("The active controller package is not ready for this session.");
+        return QString();
+    };
+
+    switch (command) {
+    case Command::None:
+        return Tr::tr("No controller control operation is selected.");
+    case Command::AcquireControl:
+        if (!snapshot.session)
+            return Tr::tr("The controller session has not been established.");
+        if (ownsControlLease)
+            return Tr::tr("This session already owns the controller control lease.");
+        if (controllerControlLeaseOwnershipUnverified(snapshot)) {
+            return Tr::tr(
+                "The controller control lease ownership is unverified for this session.");
+        }
+        if (snapshot.session->controlLeaseOwnerSessionId)
+            return Tr::tr("The controller control lease is owned by another session.");
+        return {};
+    case Command::ReleaseControl:
+        if (const QString reason = requireOwnedLease(); !reason.isEmpty())
+            return reason;
+        return {};
+    case Command::EnterConfigurationMode:
+        if (const QString reason = requireOwnedLease(); !reason.isEmpty())
+            return reason;
+        if (const QString reason = requireReadyState(); !reason.isEmpty())
+            return reason;
+        if (controllerState->serviceState != ServiceState::OperationalSafe
+            && controllerState->serviceState != ServiceState::Running
+            && controllerState->serviceState != ServiceState::Fault
+            && controllerState->serviceState != ServiceState::Paused
+            && controllerState->serviceState != ServiceState::Shutdown) {
+            return Tr::tr("The controller service state does not allow configuration mode.");
+        }
+        return {};
+    case Command::DiscoverTopology:
+        if (const QString reason = requireOwnedLease(); !reason.isEmpty())
+            return reason;
+        if (const QString reason = requireReadyState(); !reason.isEmpty())
+            return reason;
+        if (!snapshot.package)
+            return Tr::tr("The controller package state is unavailable.");
+        if (snapshot.package->controllerState == Data::ControllerPackageState::Active)
+            return Tr::tr("Deactivate the controller package before scanning the bus.");
+        if (controllerState->serviceState != ServiceState::Shutdown)
+            return Tr::tr("The controller must be in Shutdown before scanning the bus.");
+        return {};
+    case Command::RestoreActivePackage:
+        if (const QString reason = requireOwnedLease(); !reason.isEmpty())
+            return reason;
+        if (const QString reason = requireReadyState(); !reason.isEmpty())
+            return reason;
+        if (!snapshot.package || snapshot.package->activeSlot == Data::ControllerSlot::None
+            || !snapshot.package->activeGeneration
+            || !snapshot.package->activeConfigurationId) {
+            return Tr::tr("No restorable active controller package is available.");
+        }
+        if (controllerState->serviceState != ServiceState::OperationalSafe
+            && controllerState->serviceState != ServiceState::Shutdown) {
+            return Tr::tr("Restore is available only in OP_SAFE or Shutdown.");
+        }
+        return {};
+    case Command::Start:
+    case Command::StartFreeRun:
+    case Command::StartDistributedClocks:
+        if (const QString reason = requireOwnedLease(); !reason.isEmpty())
+            return reason;
+        if (const QString reason = requireReadyState(); !reason.isEmpty())
+            return reason;
+        if (const QString reason = requireActivePackage(); !reason.isEmpty())
+            return reason;
+        if (controllerState->serviceState != ServiceState::OperationalSafe)
+            return Tr::tr("The controller must be in OP_SAFE before starting.");
+        if (!controllerState->busOperational || !(controllerState->ethercatAlStateBits & 0x08))
+            return Tr::tr("The EtherCAT bus has not reached Operational state.");
+        if (!controllerState->expectedWorkingCounter)
+            return Tr::tr("The expected EtherCAT working counter is unavailable.");
+        if (controllerState->actualWorkingCounter
+            != controllerState->expectedWorkingCounter) {
+            return Tr::tr("The EtherCAT working counter does not match its expected value.");
+        }
+        if (controllerState->currentFaults || controllerState->latchedFaults)
+            return Tr::tr("Clear current and latched controller faults before starting.");
+        return {};
+    case Command::Pause:
+        if (const QString reason = requireOwnedLease(); !reason.isEmpty())
+            return reason;
+        if (const QString reason = requireReadyState(); !reason.isEmpty())
+            return reason;
+        if (const QString reason = requireActivePackage(); !reason.isEmpty())
+            return reason;
+        if (controllerState->serviceState != ServiceState::Running)
+            return Tr::tr("Pause is available only while the controller is Running.");
+        return {};
+    case Command::Resume:
+        if (const QString reason = requireOwnedLease(); !reason.isEmpty())
+            return reason;
+        if (const QString reason = requireReadyState(); !reason.isEmpty())
+            return reason;
+        if (const QString reason = requireActivePackage(); !reason.isEmpty())
+            return reason;
+        if (controllerState->serviceState != ServiceState::Paused)
+            return Tr::tr("Resume is available only while the controller is Paused.");
+        if (!controllerState->busOperational || !(controllerState->ethercatAlStateBits & 0x08))
+            return Tr::tr("The EtherCAT bus has not reached Operational state.");
+        if (!controllerState->expectedWorkingCounter)
+            return Tr::tr("The expected EtherCAT working counter is unavailable.");
+        if (controllerState->actualWorkingCounter
+            != controllerState->expectedWorkingCounter) {
+            return Tr::tr("The EtherCAT working counter does not match its expected value.");
+        }
+        if (controllerState->currentFaults || controllerState->latchedFaults)
+            return Tr::tr("Clear current and latched controller faults before resuming.");
+        return {};
+    case Command::ControlledStop:
+        if (const QString reason = requireOwnedLease(); !reason.isEmpty())
+            return reason;
+        if (const QString reason = requireReadyState(); !reason.isEmpty())
+            return reason;
+        if (const QString reason = requireActivePackage(); !reason.isEmpty())
+            return reason;
+        if (controllerState->serviceState != ServiceState::Running
+            && controllerState->serviceState != ServiceState::Paused) {
+            return Tr::tr("Controlled Stop is available only while Running or Paused.");
+        }
+        return {};
+    case Command::ResetFault:
+        if (const QString reason = requireOwnedLease(); !reason.isEmpty())
+            return reason;
+        if (!controllerState)
+            return Tr::tr("The controller state is unavailable.");
+        if (controllerState->serviceState != ServiceState::Fault)
+            return Tr::tr("Fault reset is available only while the controller is in Fault state.");
+        if (controllerState->currentFaults) {
+            return Tr::tr(
+                "The current fault is still active. Resolve its cause before confirming it.");
+        }
+        if (!controllerState->latchedFaults)
+            return Tr::tr("There is no latched controller fault to confirm.");
+        if (!controllerState->latestAlarmSequence) {
+            return Tr::tr(
+                "Refresh the controller because the latched fault has no alarm checkpoint.");
+        }
+        return {};
+    }
+    return Tr::tr("The controller service state does not allow this operation.");
+}
+
+constexpr int controllerCleanupRefreshIntervalPolls = 5;
+constexpr int controllerCleanupMaximumDisconnectAttempts = 5;
+constexpr int controllerCleanupMaximumGenerationChanges = 3;
+
+static QString controllerConnectionStateName(Data::ControllerConnectionState state)
+{
+    using State = Data::ControllerConnectionState;
+    switch (state) {
+    case State::Disconnected:
+        return Tr::tr("Disconnected");
+    case State::Connecting:
+        return Tr::tr("Connecting");
+    case State::Handshaking:
+        return Tr::tr("Handshaking");
+    case State::Connected:
+        return Tr::tr("Connected");
+    case State::Degraded:
+        return Tr::tr("Degraded");
+    case State::Disconnecting:
+        return Tr::tr("Disconnecting");
+    case State::Failed:
+        return Tr::tr("Failed");
+    }
+    return Tr::tr("Unknown");
+}
+
+static QString controllerServiceStateName(Data::ControllerServiceState state)
+{
+    using State = Data::ControllerServiceState;
+    switch (state) {
+    case State::Unknown:
+        return Tr::tr("Unknown");
+    case State::Boot:
+        return Tr::tr("Boot");
+    case State::Configuring:
+        return Tr::tr("Configuring");
+    case State::SafeOperational:
+        return Tr::tr("Safe operational");
+    case State::OperationalSafe:
+        return Tr::tr("Operational safe");
+    case State::Running:
+        return Tr::tr("Running");
+    case State::Stopping:
+        return Tr::tr("Stopping");
+    case State::Fault:
+        return Tr::tr("Fault");
+    case State::Recovering:
+        return Tr::tr("Recovering");
+    case State::Shutdown:
+        return Tr::tr("Shutdown");
+    case State::Paused:
+        return Tr::tr("Paused");
+    }
+    return Tr::tr("Unknown");
+}
+
+static QString controllerControlCommandName(Data::ControllerControlCommand command)
+{
+    using Command = Data::ControllerControlCommand;
+    switch (command) {
+    case Command::None:
+        return Tr::tr("Controller control");
+    case Command::AcquireControl:
+        return Tr::tr("Acquire control");
+    case Command::ReleaseControl:
+        return Tr::tr("Release control");
+    case Command::EnterConfigurationMode:
+        return Tr::tr("Enter configuration");
+    case Command::DiscoverTopology:
+        return Tr::tr("Scan bus");
+    case Command::RestoreActivePackage:
+        return Tr::tr("Restore package");
+    case Command::Start:
+        return Tr::tr("Start");
+    case Command::StartFreeRun:
+        return Tr::tr("Start free-run");
+    case Command::StartDistributedClocks:
+        return Tr::tr("Start distributed clocks");
+    case Command::Pause:
+        return Tr::tr("Pause");
+    case Command::Resume:
+        return Tr::tr("Resume");
+    case Command::ControlledStop:
+        return Tr::tr("Controlled stop");
+    case Command::ResetFault:
+        return Tr::tr("Fault reset");
+    }
+    return Tr::tr("Controller control");
+}
+
+static QString controllerControlStateName(Data::ControllerControlState state)
+{
+    using State = Data::ControllerControlState;
+    switch (state) {
+    case State::Idle:
+        return Tr::tr("idle");
+    case State::Pending:
+        return Tr::tr("in progress");
+    case State::Succeeded:
+        return Tr::tr("succeeded");
+    case State::Failed:
+        return Tr::tr("failed");
+    }
+    return Tr::tr("unknown");
+}
+
+static QString controllerPackageDeploymentStateName(Data::ControllerPackageDeploymentState state)
+{
+    using State = Data::ControllerPackageDeploymentState;
+    switch (state) {
+    case State::Idle:
+        return Tr::tr("idle");
+    case State::Uploading:
+        return Tr::tr("uploading");
+    case State::Committing:
+        return Tr::tr("committing");
+    case State::Validating:
+        return Tr::tr("validating");
+    case State::Activating:
+        return Tr::tr("activating");
+    case State::RollingBack:
+        return Tr::tr("rolling back");
+    case State::Canceling:
+        return Tr::tr("canceling");
+    case State::Succeeded:
+        return Tr::tr("succeeded");
+    case State::Canceled:
+        return Tr::tr("canceled");
+    case State::Failed:
+        return Tr::tr("failed");
+    case State::OutcomeUnknown:
+        return Tr::tr("outcome unknown");
+    }
+    return Tr::tr("unknown");
+}
+
+static QString controllerFaultName(Data::ControllerFault fault)
+{
+    using Fault = Data::ControllerFault;
+    switch (fault) {
+    case Fault::Configuration:
+        return Tr::tr("configuration");
+    case Fault::LinkTimeout:
+        return Tr::tr("link timeout");
+    case Fault::ReceiveDrop:
+        return Tr::tr("RX drop");
+    case Fault::ReceiveOverflow:
+        return Tr::tr("RX overflow");
+    case Fault::TransmitUnavailable:
+        return Tr::tr("TX unavailable");
+    case Fault::WorkingCounter:
+        return Tr::tr("WKC mismatch");
+    case Fault::Protocol:
+        return Tr::tr("protocol");
+    case Fault::CycleLate:
+        return Tr::tr("cycle deadline missed");
+    case Fault::AlStatus:
+        return Tr::tr("slave AL status");
+    case Fault::Mailbox:
+        return Tr::tr("mailbox");
+    case Fault::Sdo:
+        return Tr::tr("SDO abort");
+    case Fault::DistributedClocksConfiguration:
+        return Tr::tr("DC configuration");
+    case Fault::DistributedClocksDrift:
+        return Tr::tr("DC drift");
+    case Fault::Command:
+        return Tr::tr("command precondition");
+    case Fault::Watchdog:
+        return Tr::tr("watchdog");
+    case Fault::Internal:
+        return Tr::tr("internal");
+    case Fault::NetworkQuickStop:
+        return Tr::tr("network quick stop");
+    }
+    return Tr::tr("unknown");
+}
+
+static QString controllerFaultMaskHex(quint64 faults)
+{
+    return QStringLiteral("0x%1").arg(faults, 5, 16, QLatin1Char('0'));
+}
+
+static QString controllerFaultMaskSummary(quint64 faults)
+{
+    if (!faults)
+        return Tr::tr("none (%1)").arg(controllerFaultMaskHex(faults));
+
+    QStringList names;
+    for (int bit = 0; bit < Data::ControllerFaultCount; ++bit) {
+        if (faults & (quint64(1) << bit))
+            names.append(controllerFaultName(
+                static_cast<Data::ControllerFault>(quint64(1) << bit)));
+    }
+    if (faults & ~Data::ControllerFaultKnownMask)
+        names.append(Tr::tr("unknown bits"));
+    return Tr::tr("%1 (%2)").arg(names.join(QStringLiteral(", ")), controllerFaultMaskHex(faults));
+}
+
+static QString controllerFaultAction(quint64 currentFaults, quint64 latchedFaults)
+{
+    if (!currentFaults) {
+        return latchedFaults
+                   ? Tr::tr("The cause has cleared; confirm it is safe, then reset the latched fault.")
+                   : Tr::tr("Refresh diagnostics; the controller reported no fault mask.");
+    }
+    if (currentFaults & (currentFaults - 1)) {
+        return Tr::tr("Resolve every current fault before resetting the controller.");
+    }
+
+    const auto activeFault = static_cast<Data::ControllerFault>(currentFaults);
+    using Fault = Data::ControllerFault;
+    switch (activeFault) {
+    case Fault::Configuration:
+        return Tr::tr("Check the active package, scanned topology, PDOs, and startup parameters.");
+    case Fault::LinkTimeout:
+        return Tr::tr("Check the EtherCAT cable, slave power, and link diagnostics.");
+    case Fault::ReceiveDrop:
+        return Tr::tr("Check RX drops, frame identity, and receive context.");
+    case Fault::ReceiveOverflow:
+        return Tr::tr("Check the receive queue depth and processing load.");
+    case Fault::TransmitUnavailable:
+        return Tr::tr("Check the transmit ring and controller link readiness.");
+    case Fault::WorkingCounter:
+        return Tr::tr("Compare expected WKC with each slave's AL state and the topology.");
+    case Fault::Protocol:
+        return Tr::tr("Inspect the raw frame and datagram identity.");
+    case Fault::CycleLate:
+        return Tr::tr("Check cycle timing and the submit deadline.");
+    case Fault::AlStatus:
+        return Tr::tr("Read the affected slave's AL status code.");
+    case Fault::Mailbox:
+        return Tr::tr("Check the mailbox phase, size, protocol, and timeout.");
+    case Fault::Sdo:
+        return Tr::tr("Decode the SDO abort code and object index/subindex.");
+    case Fault::DistributedClocksConfiguration:
+        return Tr::tr("Verify the ESI DC mode, cycle, shift, and reference clock.");
+    case Fault::DistributedClocksDrift:
+        return Tr::tr("Check DC synchronization, the reference clock, and the link.");
+    case Fault::Command:
+        return Tr::tr("Refresh state and verify the command preconditions.");
+    case Fault::Watchdog:
+        return Tr::tr("Check the cyclic task, application budget, and watchdog source.");
+    case Fault::Internal:
+        return Tr::tr("Preserve diagnostics and use controlled recovery.");
+    case Fault::NetworkQuickStop:
+        return Tr::tr("Confirm the operator request before resetting the fault.");
+    }
+    return Tr::tr("Resolve the current fault before resetting the controller.");
+}
+
+static QString controllerFaultMessage(const Data::ControllerConnectionSnapshot &snapshot)
+{
+    QTC_ASSERT(snapshot.controllerState, return {});
+    const Data::ControllerStateSummary &state = *snapshot.controllerState;
+    QStringList fields{
+        controllerConnectionStateName(snapshot.state),
+        Tr::tr("Fault"),
+        Tr::tr("current: %1").arg(controllerFaultMaskSummary(state.currentFaults)),
+        Tr::tr("latched: %1").arg(controllerFaultMaskSummary(state.latchedFaults)),
+    };
+    QStringList matchingAlarms;
+    const quint64 relevantFaults = state.currentFaults | state.latchedFaults;
+    for (qsizetype index = snapshot.recentAlarms.size(); index > 0
+         && matchingAlarms.size() < 2; --index) {
+        const Data::ControllerAlarmSummary &alarm = snapshot.recentAlarms.at(index - 1);
+        if (alarm.state != Data::ControllerAlarmState::Raised
+            || !(alarm.faultMask & relevantFaults)) {
+            continue;
+        }
+        QString alarmText = Tr::tr("alarm #%1: %2").arg(alarm.sequence).arg(alarm.codeName);
+        if (!alarm.detail.isEmpty())
+            alarmText += Tr::tr(" (%1)").arg(alarm.detail);
+        matchingAlarms.prepend(alarmText);
+    }
+    if (!matchingAlarms.isEmpty())
+        fields.append(matchingAlarms);
+    else if (state.latestAlarmSequence)
+        fields.append(Tr::tr("alarm #%1").arg(state.latestAlarmSequence));
+    if (state.latestCommandResult)
+        fields.append(Tr::tr("last command: %1").arg(state.latestCommandResult));
+    fields.append(
+        Tr::tr("Action: %1")
+            .arg(controllerFaultAction(state.currentFaults, state.latchedFaults)));
+    return fields.join(QStringLiteral(" · "));
+}
+
+static QString controllerOperationErrorMessage(
+    const Data::ControllerConnectionSnapshot &snapshot,
+    const Data::ControllerOperationError &error)
+{
+    QStringList details;
+    const QString summary = error.summary.trimmed();
+    const QString detail = error.detail.trimmed();
+    if (!summary.isEmpty())
+        details.append(summary);
+
+    QString status;
+    if (!error.codeName.isEmpty() && error.code) {
+        status = Tr::tr("%1 (%2)").arg(error.codeName).arg(*error.code);
+    } else if (!error.codeName.isEmpty()) {
+        status = error.codeName;
+    } else if (error.code) {
+        status = Tr::tr("status %1").arg(*error.code);
+    }
+    if (!status.isEmpty())
+        details.append(status);
+    if (error.operationResult && (!error.code || *error.operationResult != *error.code))
+        details.append(Tr::tr("result %1").arg(*error.operationResult));
+    if (!detail.isEmpty() && detail != summary)
+        details.append(detail);
+    if (error.sourceDetail)
+        details.append(Tr::tr("diagnostic 0x%1").arg(*error.sourceDetail, 0, 16));
+    if (details.isEmpty())
+        details.append(Tr::tr("No diagnostic details were returned."));
+
+    const bool connectionFailure
+        = snapshot.state == Data::ControllerConnectionState::Failed
+          || error.operation == Data::ControllerOperation::Connect
+          || error.operation == Data::ControllerOperation::Handshake;
+    return connectionFailure ? Tr::tr("Connection failed: %1").arg(details.join(Tr::tr(" · ")))
+                             : Tr::tr("Controller error: %1").arg(details.join(Tr::tr(" · ")));
+}
+
+static QString controllerFaultResetFailureMessage(
+    const Data::ControllerConnectionSnapshot &snapshot)
+{
+    const Data::ControllerControlProgress &progress = snapshot.controlProgress;
+    QStringList fields{Tr::tr("Fault reset failed")};
+    const auto appendUnique = [&fields](const QString &value) {
+        const QString trimmed = value.trimmed();
+        if (!trimmed.isEmpty() && !fields.contains(trimmed))
+            fields.append(trimmed);
+    };
+
+    if (snapshot.lastError
+        && snapshot.lastError->operation == Data::ControllerOperation::ResetFault) {
+        const Data::ControllerOperationError &error = *snapshot.lastError;
+        appendUnique(error.summary);
+        if (!error.codeName.isEmpty() && error.code) {
+            appendUnique(Tr::tr("%1 (%2)").arg(error.codeName).arg(*error.code));
+        } else if (!error.codeName.isEmpty()) {
+            appendUnique(error.codeName);
+        } else if (error.code) {
+            appendUnique(Tr::tr("status %1").arg(*error.code));
+        }
+        if (error.operationResult)
+            appendUnique(Tr::tr("result %1").arg(*error.operationResult));
+        if (!error.channelId.isEmpty())
+            appendUnique(Tr::tr("channel %1").arg(error.channelId));
+        appendUnique(error.detail);
+    } else {
+        if (progress.status)
+            appendUnique(Tr::tr("status %1").arg(*progress.status));
+        if (progress.operationResult) {
+            appendUnique(Tr::tr("result %1").arg(*progress.operationResult));
+        }
+        appendUnique(progress.detail);
+    }
+    appendUnique(progress.detail);
+
+    const bool verificationUnconfirmed
+        = progress.status && *progress.status == 0 && snapshot.lastError
+          && snapshot.lastError->operation == Data::ControllerOperation::ResetFault
+          && snapshot.lastError->source == Data::ControllerErrorSource::Protocol;
+    QString stageEvidence
+        = progress.stage
+              ? Tr::tr("stage %1 · %2")
+                    .arg(progress.stage)
+                    .arg(progress.final ? Tr::tr("final") : Tr::tr("outcome unconfirmed"))
+              : progress.final ? Tr::tr("final") : Tr::tr("outcome unconfirmed");
+    if (verificationUnconfirmed && progress.final)
+        stageEvidence += QStringLiteral(" · ") + Tr::tr("outcome unconfirmed");
+    fields.append(stageEvidence);
+
+    quint64 relevantFaults = progress.expectedLatchedFaults;
+    if (snapshot.controllerState) {
+        const Data::ControllerStateSummary &state = *snapshot.controllerState;
+        fields.append(
+            Tr::tr("current: %1").arg(controllerFaultMaskSummary(state.currentFaults)));
+        fields.append(
+            Tr::tr("latched: %1").arg(controllerFaultMaskSummary(state.latchedFaults)));
+        relevantFaults |= state.currentFaults | state.latchedFaults;
+    } else {
+        fields.append(Tr::tr("current: %1").arg(Tr::tr("Not available")));
+    }
+    bool matchingAlarmRetained = false;
+    for (qsizetype index = snapshot.recentAlarms.size(); index > 0; --index) {
+        const Data::ControllerAlarmSummary &alarm = snapshot.recentAlarms.at(index - 1);
+        if (alarm.state != Data::ControllerAlarmState::Raised
+            || !relevantFaults || !(alarm.faultMask & relevantFaults)) {
+            continue;
+        }
+        QString alarmText
+            = Tr::tr("alarm #%1: %2").arg(alarm.sequence).arg(alarm.codeName);
+        if (!alarm.detail.isEmpty())
+            alarmText += Tr::tr(" (%1)").arg(alarm.detail);
+        fields.append(alarmText);
+        matchingAlarmRetained = true;
+        break;
+    }
+    if ((!snapshot.controllerState || !matchingAlarmRetained)
+        && progress.expectedLatchedFaults) {
+        fields.append(
+            Tr::tr("latched before reset: %1")
+                .arg(controllerFaultMaskSummary(progress.expectedLatchedFaults)));
+        if (progress.expectedAlarmSequence) {
+            fields.append(
+                Tr::tr("alarm checkpoint #%1").arg(progress.expectedAlarmSequence));
+        }
+    }
+    if (snapshot.controllerState) {
+        fields.append(
+            Tr::tr("Action: %1")
+                .arg(controllerFaultAction(
+                    snapshot.controllerState->currentFaults,
+                    snapshot.controllerState->latchedFaults)));
+    } else {
+        fields.append(
+            Tr::tr("Action: Refresh state and alarms before attempting another fault reset."));
+    }
+    return fields.join(QStringLiteral(" · "));
+}
+
+static QString controllerOutputFingerprint(
+    const QString &message, ControllerOutputLevel level)
+{
+    return QStringLiteral("%1:%2").arg(int(level)).arg(message);
+}
+
+static ControllerOutputLevel controllerOutputLevel(
+    const Data::ControllerConnectionSnapshot &snapshot)
+{
+    if (snapshot.state == Data::ControllerConnectionState::Failed || snapshot.lastError
+        || snapshot.controlProgress.state == Data::ControllerControlState::Failed
+        || snapshot.packageDeploymentProgress.state == Data::ControllerPackageDeploymentState::Failed
+        || snapshot.packageDeploymentProgress.state
+               == Data::ControllerPackageDeploymentState::OutcomeUnknown
+        || (snapshot.controllerState
+            && (snapshot.controllerState->serviceState == Data::ControllerServiceState::Fault
+                || snapshot.controllerState->currentFaults
+                || snapshot.controllerState->latchedFaults))) {
+        return ControllerOutputLevel::Error;
+    }
+    if (snapshot.state == Data::ControllerConnectionState::Degraded || snapshot.readOnly
+        || snapshot.packageDeploymentProgress.state
+               == Data::ControllerPackageDeploymentState::Canceled
+        || (snapshot.state == Data::ControllerConnectionState::Connected
+            && snapshot.session && !snapshot.session->ownsControlLease)) {
+        return ControllerOutputLevel::Warning;
+    }
+    return ControllerOutputLevel::Information;
+}
+
+static QString controllerOutputMessage(const Data::ControllerConnectionSnapshot &snapshot)
+{
+    if (snapshot.controlProgress.command == Data::ControllerControlCommand::ResetFault
+        && snapshot.controlProgress.state == Data::ControllerControlState::Failed) {
+        return controllerFaultResetFailureMessage(snapshot);
+    }
+    if (snapshot.controlProgress.command == Data::ControllerControlCommand::ResetFault
+        && snapshot.controlProgress.state == Data::ControllerControlState::Succeeded
+        && snapshot.controlProgress.stage == 0
+        && !snapshot.controlProgress.detail.isEmpty()) {
+        return Tr::tr("%1: %2")
+            .arg(controllerControlCommandName(snapshot.controlProgress.command),
+                 snapshot.controlProgress.detail);
+    }
+
+    if (snapshot.controllerState
+        && (snapshot.controllerState->serviceState == Data::ControllerServiceState::Fault
+            || snapshot.controllerState->currentFaults
+            || snapshot.controllerState->latchedFaults)) {
+        return controllerFaultMessage(snapshot);
+    }
+
+    if (snapshot.lastError)
+        return controllerOperationErrorMessage(snapshot, *snapshot.lastError);
+
+    if (snapshot.packageDeploymentProgress.state != Data::ControllerPackageDeploymentState::Idle) {
+        const Data::ControllerPackageDeploymentProgress &deployment
+            = snapshot.packageDeploymentProgress;
+        using State = Data::ControllerPackageDeploymentState;
+        if (deployment.state == State::Uploading || deployment.state == State::Committing
+            || deployment.state == State::Validating || deployment.state == State::Activating
+            || deployment.state == State::RollingBack || deployment.state == State::Canceling) {
+            return {};
+        }
+        QString progress = Tr::tr("Package deployment %1")
+                               .arg(controllerPackageDeploymentStateName(deployment.state));
+        if (!deployment.operationId.isEmpty())
+            progress += Tr::tr(" [%1]").arg(deployment.operationId);
+        if (!deployment.detail.isEmpty())
+            progress += Tr::tr(" (%1)").arg(deployment.detail);
+        return progress;
+    }
+
+    if (snapshot.controlProgress.state != Data::ControllerControlState::Idle) {
+        if (snapshot.controlProgress.state == Data::ControllerControlState::Pending)
+            return {};
+        QString progress = Tr::tr("%1 %2")
+                               .arg(
+                                   controllerControlCommandName(snapshot.controlProgress.command),
+                                   controllerControlStateName(snapshot.controlProgress.state));
+        if (snapshot.controlProgress.status)
+            progress += Tr::tr(" · status %1").arg(*snapshot.controlProgress.status);
+        if (snapshot.controlProgress.operationResult
+            && (!snapshot.controlProgress.status
+                || *snapshot.controlProgress.operationResult != *snapshot.controlProgress.status)) {
+            progress += Tr::tr(" · result %1").arg(*snapshot.controlProgress.operationResult);
+        }
+        if (snapshot.controlProgress.state == Data::ControllerControlState::Failed
+            && !snapshot.controlProgress.detail.isEmpty()) {
+            progress += Tr::tr(" (%1)").arg(snapshot.controlProgress.detail);
+        }
+        return progress;
+    }
+
+    if (snapshot.state == Data::ControllerConnectionState::Connecting
+        || snapshot.state == Data::ControllerConnectionState::Handshaking
+        || snapshot.state == Data::ControllerConnectionState::Disconnecting) {
+        return {};
+    }
+
+    QStringList fields{controllerConnectionStateName(snapshot.state)};
+    if (snapshot.controllerState) {
+        fields.append(controllerServiceStateName(snapshot.controllerState->serviceState));
+    }
+    if (snapshot.topology) {
+        fields.append(
+            Tr::tr("%n device(s)", nullptr, int(snapshot.topology->slaves.size())));
+    }
+    if (snapshot.controllerState
+        && (snapshot.controllerState->actualWorkingCounter
+            || snapshot.controllerState->expectedWorkingCounter)) {
+        fields.append(
+            Tr::tr("WKC %1/%2")
+                .arg(snapshot.controllerState->actualWorkingCounter)
+                .arg(snapshot.controllerState->expectedWorkingCounter));
+    }
+    return fields.join(QStringLiteral(" · "));
+}
+
+WorkbenchController::WorkbenchController(QObject *parent)
+    : QObject(parent)
+{
+    m_selectionService = ExtensionSystem::PluginManager::getObject<Core::SelectionService>();
+    m_projectService = ExtensionSystem::PluginManager::getObject<Core::ProjectService>();
+    m_deviceRepository
+        = ExtensionSystem::PluginManager::getObject<Core::DeviceRepositoryProvider>();
+    m_providerRegistry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    m_runtimePackageActivationService
+        = ExtensionSystem::PluginManager::getObject<Core::RuntimePackageActivationService>();
+    m_scanProviderSelectionService
+        = ExtensionSystem::PluginManager::getObject<Core::ScanProviderSelectionService>();
+    m_topologyService = ExtensionSystem::PluginManager::getObject<Core::TopologyService>();
+
+    QTC_ASSERT(m_selectionService, return);
+    QTC_ASSERT(m_projectService, return);
+    QTC_ASSERT(m_deviceRepository, return);
+    QTC_ASSERT(m_providerRegistry, return);
+    QTC_ASSERT(m_runtimePackageActivationService, return);
+    QTC_ASSERT(m_scanProviderSelectionService, return);
+    QTC_ASSERT(m_topologyService, return);
+
+    m_connections.append(connect(
+        m_runtimePackageActivationService,
+        &Core::RuntimePackageActivationService::recordChanged,
+        this,
+        [this](const Data::RuntimePackageActivationRecord &record) {
+            emit trustedRuntimePackageActivationChanged();
+            if (!Data::runtimePackageActivationOutcomeIsTerminal(record.outcome()))
+                return;
+
+            const QString operationId
+                = record.identity().operationId().value();
+            const quint64 reportedRevision
+                = m_reportedRuntimePackageActivationRevisions.value(operationId);
+            if (reportedRevision >= record.revision())
+                return;
+            m_reportedRuntimePackageActivationRevisions.insert(
+                operationId, record.revision());
+
+            const bool succeeded
+                = record.outcome()
+                      == Data::RuntimePackageActivationOutcome::
+                          SucceededWithExistingPackage
+                  || record.outcome()
+                         == Data::RuntimePackageActivationOutcome::
+                             SucceededWithActivatedPackage;
+            if (succeeded) {
+                writeControllerOutput(
+                    Tr::tr(
+                        "Trusted package activated and the verified project binding was saved "
+                        "[%1].")
+                        .arg(operationId));
+                refreshProjects();
+                return;
+            }
+            writeControllerOutput(
+                Tr::tr("Trusted package activation failed [%1]: %2")
+                    .arg(
+                        operationId,
+                        record.detail().isEmpty()
+                            ? Tr::tr("Review the activation audit before retrying.")
+                            : record.detail()),
+                ControllerOutputLevel::Error);
+        }));
+
+    m_connections.append(connect(
+        this,
+        &WorkbenchController::controllerConnectionChanged,
+        this,
+        &WorkbenchController::scheduleControllerAutoAcquire));
+    m_treeModel.setDeviceDropHandler(
+        [this](const Data::NodeId &deviceId, const Data::NodeId &masterId) {
+            const Utils::Result<> result = addDeviceToMaster(deviceId, masterId);
+            if (result)
+                return true;
+            ::Core::MessageManager::writeFlashing(
+                Tr::tr("Cannot drop the ESI device: %1").arg(result.error()));
+            return false;
+        });
+
+    m_connections.append(connect(
+        m_projectService,
+        &Core::ProjectService::projectAdded,
+        this,
+        [this] { refreshProjects(); }));
+    m_connections.append(connect(
+        m_projectService,
+        &Core::ProjectService::projectAboutToBeRemoved,
+        this,
+        [this](const Data::NodeId &projectId) {
+            handleProjectAboutToBeRemoved(projectId);
+            QMetaObject::invokeMethod(
+                this, &WorkbenchController::refreshProjects, Qt::QueuedConnection);
+        }));
+    m_connections.append(connect(
+        m_projectService,
+        &Core::ProjectService::projectChanged,
+        this,
+        [this](const Data::ProjectSnapshot &project) {
+            if (m_runtimePackageActivationPreparation
+                && m_runtimePackageActivationPreparation->scope.projectId == project.id) {
+                clearTrustedRuntimePackageActivationPreparation();
+            }
+            refreshProjects();
+        }));
+    m_connections.append(connect(
+        m_projectService,
+        &Core::ProjectService::activeProjectChanged,
+        this,
+        [this] {
+            refreshProjects();
+            scheduleControllerAutoAcquire();
+        }));
+    m_connections.append(connect(
+        m_scanProviderSelectionService,
+        &Core::ScanProviderSelectionService::selectionChanged,
+        this,
+        [this] { refreshOptionalProviders(); }));
+    m_connections.append(connect(
+        m_scanProviderSelectionService,
+        &Core::ScanProviderSelectionService::selectionValidityChanged,
+        this,
+        [this] { refreshOptionalProviders(); }));
+    m_connections.append(connect(
+        m_topologyService,
+        &Core::TopologyService::topologyChanged,
+        this,
+        [this](Core::TopologyEvidenceSource source, Utils::Id) {
+            if (source == Core::TopologyEvidenceSource::MockScan)
+                refreshOptionalProviders();
+        }));
+    m_connections.append(
+        connect(m_selectionService, &Core::SelectionService::currentNodeChanged, this, [this] {
+            handleControllerConnectionChanged();
+        }));
+    m_connections.append(connect(
+        m_deviceRepository,
+        &Core::DeviceRepositoryProvider::devicesReset,
+        this,
+        &WorkbenchController::refreshDevices));
+    m_connections.append(connect(
+        m_deviceRepository,
+        &Core::DeviceRepositoryProvider::devicesChanged,
+        this,
+        [this] { refreshDevices(); }));
+    m_connections.append(connect(
+        m_providerRegistry,
+        &Core::ProviderRegistry::providerAdded,
+        this,
+        [this](Core::Provider *provider) {
+            if (qobject_cast<Core::ScanProvider *>(provider))
+                m_removingScanProviderIds.remove(provider->id());
+            watchOptionalProvider(provider);
+            watchDeviceAdapterProvider(provider);
+            watchControllerConnectionProvider(provider);
+            refreshDeviceAdapterProviders();
+            restoreScanProviderSelections();
+            refreshOptionalProviders();
+            if (provider && provider->kind() == Core::ProviderKind::ControllerConnection)
+                handleControllerConnectionChanged();
+        }));
+    m_connections.append(connect(
+        m_providerRegistry,
+        &Core::ProviderRegistry::providerAboutToBeRemoved,
+        this,
+        [this](Core::Provider *provider) {
+            if (qobject_cast<Core::ScanProvider *>(provider)) {
+                const Utils::Id providerId = provider->id();
+                m_removingScanProviderIds.insert(providerId);
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, providerId] {
+                        m_removingScanProviderIds.remove(providerId);
+                        refreshOptionalProviders();
+                    },
+                    Qt::QueuedConnection);
+            }
+            if (provider && provider->kind() == Core::ProviderKind::DeviceAdapter)
+                refreshDeviceAdapterProvidersExcluding(provider);
+            refreshOptionalProviders(provider);
+            if (provider && provider->kind() == Core::ProviderKind::ControllerConnection) {
+                if (auto connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(
+                        provider)) {
+                    const auto cleanup = m_controllerCleanupStates.find(connectionProvider);
+                    if (cleanup != m_controllerCleanupStates.end()) {
+                        writeControllerOutput(
+                            Tr::tr("Cleanup canceled: adapter removed."),
+                            ControllerOutputLevel::Error);
+                        m_controllerCleanupStates.erase(cleanup);
+                    }
+                    if (m_controllerStartupStates.remove(connectionProvider)) {
+                        writeControllerOutput(
+                            Tr::tr("Start canceled: adapter removed."),
+                            ControllerOutputLevel::Error);
+                    }
+                    if (m_controllerStopStates.remove(connectionProvider)) {
+                        writeControllerOutput(
+                            Tr::tr("Stop canceled: adapter removed."),
+                            ControllerOutputLevel::Error);
+                    }
+                    m_controllerConnectionProviderEpochs.remove(connectionProvider);
+                    m_controllerAutoAcquireStates.remove(connectionProvider);
+                    m_controllerOutputFingerprints.remove(connectionProvider);
+                    m_topologyCapabilityFingerprints.remove(connectionProvider);
+                }
+                handleControllerConnectionChanged();
+            }
+        }));
+    for (Core::Provider *provider : m_providerRegistry->providers()) {
+        watchOptionalProvider(provider);
+        watchDeviceAdapterProvider(provider);
+        watchControllerConnectionProvider(provider);
+    }
+    refreshDeviceAdapterProviders();
+    refreshOptionalProviders();
+    refresh();
+}
+
+WorkbenchController::~WorkbenchController()
+{
+    shutdown();
+}
+
+WorkbenchTreeModel *WorkbenchController::treeModel()
+{
+    return &m_treeModel;
+}
+
+Core::SelectionService *WorkbenchController::selectionService() const
+{
+    return m_selectionService;
+}
+
+Core::ProjectService *WorkbenchController::projectService() const
+{
+    return m_projectService;
+}
+
+Core::DeviceRepositoryProvider *WorkbenchController::deviceRepository() const
+{
+    return m_deviceRepository;
+}
+
+Core::ProviderRegistry *WorkbenchController::providerRegistry() const
+{
+    return m_providerRegistry;
+}
+
+OptionalProviderPresentation WorkbenchController::scanProviderPresentation() const
+{
+    const std::optional<Data::ControllerConnectionScope> scope = quickControllerControlScope();
+    return scope ? scanProviderPresentation(*scope) : OptionalProviderPresentation();
+}
+
+OptionalProviderPresentation WorkbenchController::scanProviderPresentation(
+    const Data::ControllerConnectionScope &scope) const
+{
+    const std::optional<Core::ScanProviderSelection> selection = scanProviderSelection(scope);
+    if (!selection)
+        return {};
+
+    Core::Provider *provider = m_providerRegistry
+                                  ? m_providerRegistry->provider(selection->providerId)
+                                  : nullptr;
+    if (!m_removingScanProviderIds.contains(selection->providerId)) {
+        if (auto *scanProvider = qobject_cast<Core::ScanProvider *>(provider)) {
+            return optionalProviderPresentation(
+                scanProvider, Core::ProviderKind::Scan);
+        }
+    }
+
+    OptionalProviderPresentation presentation{
+        OptionalProviderState::Unavailable, selection->providerId.toString()};
+    presentation.displayName = optionalProviderDisplayName(
+        presentation, Core::ProviderKind::Scan);
+    return presentation;
+}
+
+QList<Core::ScanProvider *> WorkbenchController::scanProviders() const
+{
+    QList<Core::ScanProvider *> result;
+    if (!m_providerRegistry)
+        return result;
+    for (Core::Provider *provider : m_providerRegistry->providers(Core::ProviderKind::Scan)) {
+        if (auto *scanProvider = qobject_cast<Core::ScanProvider *>(provider);
+            scanProvider && !m_removingScanProviderIds.contains(scanProvider->id())) {
+            result.append(scanProvider);
+        }
+    }
+    std::sort(result.begin(), result.end(), [](const auto *left, const auto *right) {
+        const int displayOrder
+            = left->displayName().compare(right->displayName(), Qt::CaseInsensitive);
+        if (displayOrder != 0)
+            return displayOrder < 0;
+        return left->id().toString() < right->id().toString();
+    });
+    return result;
+}
+
+std::optional<Core::ScanProviderSelection> WorkbenchController::scanProviderSelection(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (m_shuttingDown || !m_scanProviderSelectionService)
+        return std::nullopt;
+    return m_scanProviderSelectionService->selection(scope);
+}
+
+Utils::Result<> WorkbenchController::selectScanProvider(
+    const Data::ControllerConnectionScope &scope, Utils::Id providerId)
+{
+    if (m_shuttingDown || !m_scanProviderSelectionService) {
+        return Utils::ResultError(
+            Tr::tr("The Mock scan provider selection service is unavailable."));
+    }
+
+    const QScopedValueRollback suppressRestore(
+        m_suppressScanProviderPreferenceRestore, true);
+    const Utils::Result<> result = providerId.isValid()
+                                       ? m_scanProviderSelectionService->select(scope, providerId)
+                                       : m_scanProviderSelectionService->clear(scope);
+    if (!result)
+        return result;
+
+    if (providerId.isValid())
+        setScanProviderPreference(scope, providerId);
+    else
+        clearScanProviderPreference(scope);
+    return Utils::ResultOk;
+}
+
+OptionalProviderPresentation WorkbenchController::diagnosticsProviderPresentation() const
+{
+    return m_diagnosticsProvider;
+}
+
+DiagnosticsStatusPresentation WorkbenchController::diagnosticsStatusPresentation() const
+{
+    return m_diagnosticsStatus;
+}
+
+std::optional<Data::ScanResult> WorkbenchController::automationScanResult(
+    const Data::ControllerConnectionScope &scope) const
+{
+    const Core::TopologyLookupResult topology = selectedMockTopology(scope);
+    return topology.hasFreshProviderEvidence() && topology.snapshot
+                   && topology.snapshot->mockEvidence
+               ? topology.snapshot->mockEvidence
+               : std::nullopt;
+}
+
+QList<Core::AutomationTopologyView> WorkbenchController::automationTopologyViews(
+    const Data::ControllerConnectionScope &scope) const
+{
+    QList<Core::AutomationTopologyView> result;
+    if (m_shuttingDown || !controllerConnectionScopeIsValid(scope))
+        return result;
+
+    const ControllerConnectionSelection realSelection = controllerConnectionSelection(scope);
+    if (realSelection.providerExplicitlySelected && realSelection.providerId.isValid()
+        && realSelection.profileExplicitlySelected && !realSelection.profileId.isNull()) {
+        const Core::TopologySelection topologySelection{
+            Core::TopologyEvidenceSource::RealController,
+            realSelection.providerId,
+            scope,
+        };
+        result.append({topologySelection, selectedRealTopology(scope)});
+    }
+
+    if (const std::optional<Core::ScanProviderSelection> mockSelection
+        = scanProviderSelection(scope)) {
+        const Core::TopologySelection topologySelection{
+            Core::TopologyEvidenceSource::MockScan,
+            mockSelection->providerId,
+            scope,
+        };
+        result.append({topologySelection, selectedMockTopology(scope)});
+    }
+
+    return result;
+}
+
+std::optional<Data::DiagnosticsSnapshot>
+WorkbenchController::automationDiagnosticsSnapshot(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (m_shuttingDown)
+        return std::nullopt;
+    const auto diagnostics = preferredDiagnosticsProvider(m_providerRegistry, nullptr);
+    if (!diagnostics || !diagnostics->isAvailable())
+        return std::nullopt;
+    const std::optional<Data::DiagnosticsSnapshot> snapshot
+        = diagnostics->latestSnapshot();
+    if (!snapshot || snapshot->projectId != scope.projectId
+        || snapshot->masterId != scope.masterId) {
+        return std::nullopt;
+    }
+    return snapshot;
+}
+
+QList<Core::ControllerConnectionProvider *> WorkbenchController::controllerConnectionProviders() const
+{
+    QList<Core::ControllerConnectionProvider *> result;
+    if (!m_providerRegistry)
+        return result;
+    for (Core::Provider *provider :
+         m_providerRegistry->providers(Core::ProviderKind::ControllerConnection)) {
+        if (auto connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(provider))
+            result.append(connectionProvider);
+    }
+    std::sort(result.begin(), result.end(), [](const auto *left, const auto *right) {
+        const int displayOrder
+            = left->displayName().compare(right->displayName(), Qt::CaseInsensitive);
+        if (displayOrder != 0)
+            return displayOrder < 0;
+        return left->id().toString() < right->id().toString();
+    });
+    return result;
+}
+
+std::optional<Data::ControllerConnectionScope>
+WorkbenchController::uniqueMasterControllerConnectionScope(const Data::ProjectSnapshot &project)
+{
+    if (!project.valid || project.id.isNull())
+        return std::nullopt;
+
+    Data::NodeId masterId;
+    int masterCount = 0;
+    for (const Data::ProjectNodeSnapshot &node : project.nodes) {
+        if (node.kind != Data::ProjectNodeKind::Master)
+            continue;
+        ++masterCount;
+        if (masterCount > 1)
+            return std::nullopt;
+        masterId = node.id;
+    }
+    if (masterCount != 1 || masterId.isNull())
+        return std::nullopt;
+    return Data::ControllerConnectionScope{project.id, masterId};
+}
+
+std::optional<Data::ControllerConnectionScope>
+WorkbenchController::quickControllerControlScope() const
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService
+        || hasUnmanagedEtherCATProject(m_projectService)) {
+        return std::nullopt;
+    }
+
+    const Core::PropertyPageContext selectedContext = m_treeModel.contextForNodeId(
+        m_selectionService->currentNodeId());
+    if (!selectedContext.projectId.isNull()) {
+        const std::optional<Data::ProjectSnapshot> selectedProject
+            = m_projectService->project(selectedContext.projectId);
+        if (!selectedProject || selectedProject->id != selectedContext.projectId)
+            return std::nullopt;
+        return uniqueMasterControllerConnectionScope(*selectedProject);
+    }
+
+    const QList<Data::ProjectSnapshot> projects = m_projectService->projects();
+    if (projects.size() != 1)
+        return std::nullopt;
+    return uniqueMasterControllerConnectionScope(projects.constFirst());
+}
+
+QString WorkbenchController::quickControllerControlScopeUnavailableReason() const
+{
+    if (!m_selectionService || !m_projectService)
+        return Tr::tr("The EtherCAT project service is unavailable.");
+    if (hasUnmanagedEtherCATProject(m_projectService)) {
+        return Tr::tr(
+            "An open EtherCAT project is not the registered owner of its project ID. Close the "
+            "conflicting duplicate project or assign it a unique project ID.");
+    }
+
+    const Core::PropertyPageContext selectedContext = m_treeModel.contextForNodeId(
+        m_selectionService->currentNodeId());
+    if (!selectedContext.projectId.isNull()) {
+        const std::optional<Data::ProjectSnapshot> selectedProject
+            = m_projectService->project(selectedContext.projectId);
+        if (!selectedProject || selectedProject->id != selectedContext.projectId)
+            return Tr::tr("The selected EtherCAT project is no longer available.");
+        if (!selectedProject->valid) {
+            return Tr::tr(
+                "The selected EtherCAT project is invalid. Fix its reported errors before "
+                "controlling the controller.");
+        }
+        return Tr::tr("The selected EtherCAT project must contain exactly one valid Master.");
+    }
+
+    const QList<Data::ProjectSnapshot> projects = m_projectService->projects();
+    if (projects.isEmpty())
+        return Tr::tr("Open a valid EtherCAT project before controlling the controller.");
+    if (projects.size() > 1) {
+        return Tr::tr(
+            "Select a node in the EtherCAT project whose controller you want to control.");
+    }
+    if (!projects.constFirst().valid) {
+        return Tr::tr(
+            "The open EtherCAT project is invalid. Fix its reported errors before controlling "
+            "the controller.");
+    }
+    return Tr::tr("The open EtherCAT project must contain exactly one valid Master.");
+}
+
+std::optional<Data::ControllerConnectionScope>
+WorkbenchController::activeControllerConnectionScope() const
+{
+    if (m_shuttingDown || !m_projectService)
+        return std::nullopt;
+    const Data::NodeId activeProjectId = m_projectService->activeProjectId();
+    if (activeProjectId.isNull())
+        return std::nullopt;
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(activeProjectId);
+    if (!project || project->id != activeProjectId)
+        return std::nullopt;
+    return uniqueMasterControllerConnectionScope(*project);
+}
+
+std::optional<Data::ControllerConnectionScope>
+WorkbenchController::selectedControllerConnectionScope() const
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return std::nullopt;
+    const Core::PropertyPageContext context = m_treeModel.contextForNodeId(
+        m_selectionService->currentNodeId());
+    if (context.nodeKind != Core::WorkbenchNodeKind::Master || context.projectId.isNull()
+        || context.nodeId.isNull()) {
+        return std::nullopt;
+    }
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(
+        context.projectId);
+    if (!project || !project->valid)
+        return std::nullopt;
+    const bool masterExists
+        = std::any_of(project->nodes.cbegin(), project->nodes.cend(), [&context](const auto &node) {
+              return node.id == context.nodeId && node.kind == Data::ProjectNodeKind::Master;
+          });
+    if (!masterExists)
+        return std::nullopt;
+    return Data::ControllerConnectionScope{context.projectId, context.nodeId};
+}
+
+bool WorkbenchController::controllerConnectionScopeIsValid(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (!m_projectService || scope.projectId.isNull() || scope.masterId.isNull())
+        return false;
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(scope.projectId);
+    if (!project || !project->valid || project->id != scope.projectId)
+        return false;
+    return std::any_of(
+        project->nodes.cbegin(),
+        project->nodes.cend(),
+        [&scope](const Data::ProjectNodeSnapshot &node) {
+            return node.kind == Data::ProjectNodeKind::Master && node.id == scope.masterId;
+        });
+}
+
+ControllerConnectionSelection WorkbenchController::prepareControllerConnection(
+    const Data::ControllerConnectionScope &scope)
+{
+    ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+    if (m_shuttingDown || !controllerConnectionScopeIsValid(scope)
+        || controllerConnectionSelectionLocked(scope)
+        || (selection.providerExplicitlySelected && selection.profileExplicitlySelected)) {
+        return selection;
+    }
+
+    const std::optional<ControllerConnectionSelection> automatic
+        = automaticControllerConnectionSelection(scope, controllerConnectionProviders());
+    if (!automatic)
+        return selection;
+
+    ControllerConnectionSelection *stored = mutableControllerConnectionSelection(scope);
+    if (!stored) {
+        ControllerConnectionSelection unselected;
+        unselected.scope = scope;
+        m_controllerConnectionSelections.append(unselected);
+        stored = &m_controllerConnectionSelections.last();
+    }
+    if (*stored == *automatic)
+        return *stored;
+    *stored = *automatic;
+    emit controllerConnectionChanged();
+    return *stored;
+}
+
+std::optional<ControllerConnectionSelection>
+WorkbenchController::automaticControllerConnectionSelection(
+    const Data::ControllerConnectionScope &scope,
+    const QList<Core::ControllerConnectionProvider *> &candidates)
+{
+    QList<Core::ControllerConnectionProvider *> providers;
+    for (Core::ControllerConnectionProvider *provider : candidates) {
+        if (provider && provider->isAvailable())
+            providers.append(provider);
+    }
+    if (providers.size() != 1)
+        return std::nullopt;
+
+    Core::ControllerConnectionProvider *provider = providers.constFirst();
+    QList<Data::ControllerConnectionProfile> profiles;
+    for (const Data::ControllerConnectionProfile &profile : provider->connectionProfiles(scope)) {
+        if (connectionProfileUsable(profile))
+            profiles.append(profile);
+    }
+    if (profiles.size() != 1)
+        return std::nullopt;
+    return ControllerConnectionSelection{
+        scope,
+        provider->id(),
+        profiles.constFirst().id,
+        true,
+        true,
+    };
+}
+
+ControllerConnectionSelection WorkbenchController::controllerConnectionSelection(
+    const Data::ControllerConnectionScope &scope) const
+{
+    const auto selection = std::find_if(
+        m_controllerConnectionSelections.cbegin(),
+        m_controllerConnectionSelections.cend(),
+        [&scope](const ControllerConnectionSelection &candidate) {
+            return candidate.scope == scope;
+        });
+    if (selection != m_controllerConnectionSelections.cend())
+        return *selection;
+    ControllerConnectionSelection unselected;
+    unselected.scope = scope;
+    return unselected;
+}
+
+Core::ControllerConnectionProvider *WorkbenchController::controllerConnectionProvider(
+    const Data::ControllerConnectionScope &scope) const
+{
+    const Utils::Id providerId = controllerConnectionSelection(scope).providerId;
+    if (!providerId.isValid())
+        return nullptr;
+    const QList<Core::ControllerConnectionProvider *> providers = controllerConnectionProviders();
+    const auto provider
+        = std::find_if(providers.cbegin(), providers.cend(), [providerId](const auto *candidate) {
+              return candidate->id() == providerId;
+          });
+    return provider == providers.cend() ? nullptr : *provider;
+}
+
+QList<Data::ControllerConnectionProfile> WorkbenchController::controllerConnectionProfiles(
+    const Data::ControllerConnectionScope &scope) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    return provider ? provider->connectionProfiles(scope)
+                    : QList<Data::ControllerConnectionProfile>();
+}
+
+std::optional<Data::ControllerConnectionProfileConfiguration>
+WorkbenchController::controllerConnectionProfileConfiguration(
+    const Data::ControllerConnectionScope &scope, const Data::NodeId &profileId) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider || profileId.isNull())
+        return std::nullopt;
+    return provider->connectionProfileConfiguration(scope, profileId);
+}
+
+Data::ControllerConnectionSnapshot WorkbenchController::controllerConnectionSnapshot(
+    const Data::ControllerConnectionScope &scope) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (provider)
+        return projectedControllerConnectionSnapshot(provider, scope);
+    Data::ControllerConnectionSnapshot result;
+    result.scope = scope;
+    return result;
+}
+
+Core::TopologyLookupResult WorkbenchController::selectedMockTopology(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (!m_topologyService || !m_scanProviderSelectionService
+        || !controllerConnectionScopeIsValid(scope)) {
+        return {Core::TopologyLookupStatus::InvalidSelection, std::nullopt};
+    }
+
+    const std::optional<Core::ScanProviderSelection> selection
+        = m_scanProviderSelectionService->selection(scope);
+    if (!selection || selection->scope != scope || !selection->providerId.isValid())
+        return {Core::TopologyLookupStatus::InvalidSelection, std::nullopt};
+    if (m_removingScanProviderIds.contains(selection->providerId))
+        return {Core::TopologyLookupStatus::ProviderNotFound, std::nullopt};
+
+    return m_topologyService->topology({
+        Core::TopologyEvidenceSource::MockScan,
+        selection->providerId,
+        scope,
+    });
+}
+
+Core::TopologyLookupResult WorkbenchController::selectedRealTopology(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (!m_topologyService || !controllerConnectionScopeIsValid(scope))
+        return {Core::TopologyLookupStatus::InvalidSelection, std::nullopt};
+
+    const ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+    if (!selection.providerExplicitlySelected || !selection.providerId.isValid()
+        || !selection.profileExplicitlySelected || selection.profileId.isNull()) {
+        return {Core::TopologyLookupStatus::InvalidSelection, std::nullopt};
+    }
+
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider || provider->id() != selection.providerId)
+        return {Core::TopologyLookupStatus::ProviderNotFound, std::nullopt};
+
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.scope != scope)
+        return {Core::TopologyLookupStatus::ScopeMismatch, std::nullopt};
+    if (snapshot.profileId != selection.profileId)
+        return {Core::TopologyLookupStatus::EvidenceInvalid, std::nullopt};
+
+    return m_topologyService->topology({
+        Core::TopologyEvidenceSource::RealController,
+        selection.providerId,
+        scope,
+    });
+}
+
+Data::ControllerConnectionSnapshot WorkbenchController::projectedControllerConnectionSnapshot(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionScope &scope) const
+{
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = scope;
+    if (!provider)
+        return snapshot;
+
+    snapshot = provider->connectionSnapshot();
+    snapshot.topology.reset();
+
+    const ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+    Core::ControllerConnectionProvider *selectedProvider = controllerConnectionProvider(scope);
+    if (!selection.providerExplicitlySelected || !selection.providerId.isValid()
+        || !selection.profileExplicitlySelected || selection.profileId.isNull()
+        || selectedProvider != provider || provider->id() != selection.providerId
+        || snapshot.scope != scope || snapshot.profileId != selection.profileId) {
+        return snapshot;
+    }
+
+    const Core::TopologyLookupResult topology = selectedRealTopology(scope);
+    if (topology.hasFreshProviderEvidence() && topology.snapshot
+        && topology.snapshot->controllerEvidence) {
+        snapshot.topology = topology.snapshot->controllerEvidence;
+    }
+    return snapshot;
+}
+
+bool WorkbenchController::controllerConnectionProjectIsOpen(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (!m_projectService || scope.projectId.isNull())
+        return false;
+    return m_projectService->project(scope.projectId).has_value();
+}
+
+Utils::Result<> WorkbenchController::selectControllerConnectionProvider(
+    const Data::ControllerConnectionScope &scope, Utils::Id providerId)
+{
+    if (m_shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller connection workflow is shutting down."));
+    if (controllerConnectionSelectionLocked(scope)) {
+        return Utils::ResultError(
+            Tr::tr("Disconnect the current controller session before changing its adapter."));
+    }
+
+    if (providerId.isValid()) {
+        const QList<Core::ControllerConnectionProvider *> providers
+            = controllerConnectionProviders();
+        const auto provider
+            = std::find_if(providers.cbegin(), providers.cend(), [providerId](const auto *candidate) {
+                  return candidate->id() == providerId;
+              });
+        if (provider == providers.cend())
+            return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable."));
+    }
+
+    ControllerConnectionSelection *selection = mutableControllerConnectionSelection(scope);
+    const bool providerExplicitlySelected = providerId.isValid();
+    if (selection && selection->providerId == providerId
+        && selection->providerExplicitlySelected == providerExplicitlySelected) {
+        return Utils::ResultOk;
+    }
+    if (!selection) {
+        ControllerConnectionSelection unselected;
+        unselected.scope = scope;
+        m_controllerConnectionSelections.append(unselected);
+        selection = &m_controllerConnectionSelections.last();
+    }
+    selection->providerId = providerId;
+    selection->profileId = {};
+    selection->providerExplicitlySelected = providerExplicitlySelected;
+    selection->profileExplicitlySelected = false;
+    emit controllerConnectionChanged();
+    return Utils::ResultOk;
+}
+
+Utils::Result<> WorkbenchController::selectControllerConnectionProfile(
+    const Data::ControllerConnectionScope &scope, const Data::NodeId &profileId)
+{
+    if (m_shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller connection workflow is shutting down."));
+    if (controllerConnectionSelectionLocked(scope)) {
+        return Utils::ResultError(
+            Tr::tr("Disconnect the current controller session before changing its profile."));
+    }
+    ControllerConnectionSelection *selection = mutableControllerConnectionSelection(scope);
+    if (!selection || !selection->providerExplicitlySelected || !selection->providerId.isValid()) {
+        return Utils::ResultError(Tr::tr("Select a controller adapter before selecting a profile."));
+    }
+    if (!profileId.isNull()) {
+        const QList<Data::ControllerConnectionProfile> profiles = controllerConnectionProfiles(
+            scope);
+        const auto profile
+            = std::find_if(profiles.cbegin(), profiles.cend(), [&profileId](const auto &candidate) {
+                  return candidate.id == profileId;
+              });
+        if (profile == profiles.cend())
+            return Utils::ResultError(Tr::tr("The selected connection profile is unavailable."));
+    }
+    const bool profileExplicitlySelected = !profileId.isNull();
+    if (selection->profileId == profileId
+        && selection->profileExplicitlySelected == profileExplicitlySelected) {
+        return Utils::ResultOk;
+    }
+    selection->profileId = profileId;
+    selection->profileExplicitlySelected = profileExplicitlySelected;
+    emit controllerConnectionChanged();
+    return Utils::ResultOk;
+}
+
+Utils::Result<> WorkbenchController::setControllerConnectionProfileEndpoint(
+    const Data::ControllerConnectionScope &scope,
+    const Data::NodeId &profileId,
+    const QString &endpoint)
+{
+    if (m_shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller connection workflow is shutting down."));
+    if (!controllerConnectionScopeIsValid(scope))
+        return Utils::ResultError(Tr::tr("Select a valid EtherCAT Master before editing its endpoint."));
+    if (controllerConnectionSelectionLocked(scope)) {
+        return Utils::ResultError(
+            Tr::tr("Disconnect the current controller session before changing its endpoint."));
+    }
+
+    const ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+    if (!selection.providerExplicitlySelected || !selection.profileExplicitlySelected
+        || selection.profileId != profileId) {
+        return Utils::ResultError(
+            Tr::tr("Select the connection profile before changing its endpoint."));
+    }
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable."));
+    return provider->setConnectionProfileEndpoint(scope, profileId, endpoint);
+}
+
+bool WorkbenchController::controllerConnectionSelectionLocked(
+    const Data::ControllerConnectionScope &scope) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return false;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    return snapshot.scope == scope && connectionStateLocksSelection(snapshot.state);
+}
+
+bool WorkbenchController::canConnectController(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (!controllerConnectionScopeIsValid(scope))
+        return false;
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider || !provider->isAvailable())
+        return false;
+    const ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+    if (!selection.providerExplicitlySelected || !selection.profileExplicitlySelected)
+        return false;
+    const QList<Data::ControllerConnectionProfile> profiles = provider->connectionProfiles(scope);
+    const auto profile
+        = std::find_if(profiles.cbegin(), profiles.cend(), [&selection](const auto &candidate) {
+              return candidate.id == selection.profileId;
+          });
+    if (profile == profiles.cend() || !connectionProfileUsable(*profile))
+        return false;
+    const Data::ControllerConnectionState state = provider->connectionSnapshot().state;
+    return state == Data::ControllerConnectionState::Disconnected
+           || state == Data::ControllerConnectionState::Failed;
+}
+
+bool WorkbenchController::canConnectSelectedController() const
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    return scope && canConnectController(*scope);
+}
+
+bool WorkbenchController::canDisconnectSelectedController() const
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return false;
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    if (!provider)
+        return false;
+    if (m_controllerStartupStates.contains(provider) || m_controllerStopStates.contains(provider))
+        return false;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    return (snapshot.scope == *scope || !controllerConnectionProjectIsOpen(snapshot.scope))
+           && snapshot.state != Data::ControllerConnectionState::Disconnected
+           && snapshot.state != Data::ControllerConnectionState::Disconnecting
+           && snapshot.controlProgress.state != Data::ControllerControlState::Pending
+           && !controllerControlLeaseOwnershipUnverified(snapshot);
+}
+
+bool WorkbenchController::canRefreshSelectedController() const
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return false;
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    if (!provider || !provider->isAvailable())
+        return false;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    return snapshot.scope == *scope
+           && (snapshot.state == Data::ControllerConnectionState::Connected
+               || snapshot.state == Data::ControllerConnectionState::Degraded)
+           && snapshot.controlProgress.state != Data::ControllerControlState::Pending;
+}
+
+QString WorkbenchController::currentBusApplyUnavailableReason() const
+{
+    if (m_shuttingDown)
+        return Tr::tr("The EtherCAT Workbench is shutting down.");
+    if (!m_projectService || !m_deviceRepository)
+        return Tr::tr("The EtherCAT project or ESI repository service is unavailable.");
+    if (m_deviceRepository->isIndexing())
+        return Tr::tr("Wait for the ESI repository update to finish.");
+
+    const std::optional<Data::ControllerConnectionScope> scope = quickControllerControlScope();
+    if (!scope)
+        return quickControllerControlScopeUnavailableReason();
+    const ControllerConnectionSelection selection = controllerConnectionSelection(*scope);
+    if (!selection.providerExplicitlySelected || !selection.providerId.isValid())
+        return Tr::tr("Select a controller adapter for this EtherCAT Master.");
+    if (!selection.profileExplicitlySelected || selection.profileId.isNull())
+        return Tr::tr("Select a controller connection profile for this EtherCAT Master.");
+
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    if (!provider || !provider->isAvailable())
+        return Tr::tr("The selected controller adapter is unavailable.");
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.scope != *scope || snapshot.profileId != selection.profileId
+        || (snapshot.state != Data::ControllerConnectionState::Connected
+            && snapshot.state != Data::ControllerConnectionState::Degraded)) {
+        return Tr::tr("Connect and scan this EtherCAT Master before applying the current bus.");
+    }
+    if (snapshot.mock)
+        return Tr::tr("A Mock topology cannot configure a production EtherCAT project.");
+    if (snapshot.controlProgress.state == Data::ControllerControlState::Pending)
+        return Tr::tr("Wait for the current controller operation to finish.");
+
+    const Core::TopologyLookupResult topology = selectedRealTopology(*scope);
+    if (!topology.isSuccess())
+        return Tr::tr("Scan the EtherCAT bus before applying it to the project.");
+    QTC_ASSERT(topology.snapshot, return Tr::tr("The controller topology evidence is invalid."));
+    if (topology.snapshot->freshness == Core::TopologyEvidenceFreshness::Stale)
+        return Tr::tr("Scan the EtherCAT bus again because its topology evidence is stale.");
+    if (topology.snapshot->freshness == Core::TopologyEvidenceFreshness::Incomplete) {
+        return Tr::tr(
+            "Scan the EtherCAT bus again because its topology evidence is incomplete.");
+    }
+    if (!topology.hasFreshProviderEvidence() || !topology.snapshot->controllerEvidence)
+        return Tr::tr("The controller topology evidence is invalid.");
+
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(scope->projectId);
+    if (!project)
+        return Tr::tr("The selected EtherCAT project is no longer available.");
+    const Utils::Result<CurrentBusApplyPlan> plan = currentBusApplyPlan(
+        *scope,
+        *project,
+        *topology.snapshot->controllerEvidence,
+        m_deviceRepository,
+        m_providerRegistry);
+    if (!plan)
+        return plan.error();
+    if (plan->candidateSlaves == plan->currentSlaves)
+        return Tr::tr("The current bus already matches the offline project configuration.");
+    return {};
+}
+
+bool WorkbenchController::canApplyCurrentBusToProject() const
+{
+    return currentBusApplyUnavailableReason().isEmpty();
+}
+
+Utils::Result<> WorkbenchController::applyCurrentBusToProject()
+{
+    const QString unavailableReason = currentBusApplyUnavailableReason();
+    if (!unavailableReason.isEmpty())
+        return Utils::ResultError(unavailableReason);
+
+    const std::optional<Data::ControllerConnectionScope> scope = quickControllerControlScope();
+    QTC_ASSERT(
+        scope,
+        return Utils::ResultError(
+            Tr::tr("The EtherCAT project no longer has an available Master.")));
+    const Core::TopologyLookupResult topology = selectedRealTopology(*scope);
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(scope->projectId);
+    QTC_ASSERT(
+        topology.hasFreshProviderEvidence() && topology.snapshot
+            && topology.snapshot->controllerEvidence && project,
+        return Utils::ResultError(
+            Tr::tr("The current bus or EtherCAT project is no longer available.")));
+
+    const Utils::Result<CurrentBusApplyPlan> plan = currentBusApplyPlan(
+        *scope,
+        *project,
+        *topology.snapshot->controllerEvidence,
+        m_deviceRepository,
+        m_providerRegistry);
+    if (!plan)
+        return Utils::ResultError(plan.error());
+    const Utils::Result<> applied
+        = m_projectService
+              ->replaceOfflineSlaves(scope->projectId, scope->masterId, plan->candidateSlaves);
+    if (!applied)
+        return applied;
+
+    QString message = Tr::tr("Bus applied · %1 devices · %2 matched · %3 unknown")
+                          .arg(plan->candidateSlaves.size())
+                          .arg(plan->esiMatches)
+                          .arg(plan->unknownDevices);
+    if (plan->ambiguousEsiMatches) {
+        message += Tr::tr(" · %n ambiguous", nullptr, plan->ambiguousEsiMatches);
+    }
+    if (plan->unsupportedEsiMatches) {
+        message += Tr::tr(" · %n unsupported", nullptr, plan->unsupportedEsiMatches);
+    }
+    if (plan->adapterSelectionWarnings) {
+        message += Tr::tr(" · Manual control requires importing a trusted adapter bundle.");
+    }
+    const bool warning = plan->unknownDevices || plan->adapterSelectionWarnings;
+    writeControllerOutput(
+        message, warning ? ControllerOutputLevel::Warning : ControllerOutputLevel::Information);
+    return Utils::ResultOk;
+}
+
+QString WorkbenchController::controllerControlCommonUnavailableReason(
+    const Data::ControllerConnectionScope &scope,
+    Data::ControllerControlCommand command,
+    Data::ControllerConnectionSnapshot *snapshot) const
+{
+    if (snapshot)
+        *snapshot = {};
+    if (m_shuttingDown)
+        return Tr::tr("The controller connection workflow is shutting down.");
+    if (!controllerConnectionScopeIsValid(scope))
+        return Tr::tr("The requested EtherCAT Master is not available in an open project.");
+
+    const ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+    if (!selection.providerExplicitlySelected || !selection.providerId.isValid())
+        return Tr::tr("Select a controller adapter for the active EtherCAT Master.");
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return Tr::tr("The selected controller adapter is unavailable.");
+    if (!provider->isAvailable())
+        return Tr::tr("The selected controller adapter is not available.");
+    if (m_controllerStartupStates.contains(provider))
+        return Tr::tr("Automatic controller startup is in progress.");
+    if (m_controllerStopStates.contains(provider))
+        return Tr::tr("Controller stop verification is in progress.");
+    if (!selection.profileExplicitlySelected || selection.profileId.isNull())
+        return Tr::tr("Select a controller connection profile for the active EtherCAT Master.");
+
+    const Data::ControllerConnectionSnapshot current = provider->connectionSnapshot();
+    if (snapshot)
+        *snapshot = current;
+    if (current.state != Data::ControllerConnectionState::Connected
+        && current.state != Data::ControllerConnectionState::Degraded) {
+        return Tr::tr("Connect the controller before using controller run controls.");
+    }
+    if (current.scope != scope)
+        return Tr::tr("The connected controller session belongs to a different EtherCAT Master.");
+    if (current.profileId != selection.profileId)
+        return Tr::tr("The connected controller session uses a different connection profile.");
+    if (current.mock)
+        return Tr::tr("Controller run controls are unavailable for a Mock connection.");
+    if (current.readOnly)
+        return Tr::tr("The controller connection is read-only.");
+    if (command != Data::ControllerControlCommand::None
+        && !provider->supportsControlCommand(command)) {
+        if (command == Data::ControllerControlCommand::ResetFault) {
+            return Tr::tr(
+                "UNSUPPORTED (-14): controlled fault reset requires Product API v1.11 and "
+                "feature bit 12.");
+        }
+        return Tr::tr("The connected controller does not support this control operation.");
+    }
+    if (current.controlProgress.state == Data::ControllerControlState::Pending)
+        return Tr::tr("Wait for the current controller control operation to finish.");
+    return {};
+}
+
+QString WorkbenchController::controllerControlUnavailableReason(
+    const Data::ControllerConnectionScope &scope, Data::ControllerControlCommand command) const
+{
+    Data::ControllerConnectionSnapshot snapshot;
+    if (const QString reason = controllerControlCommonUnavailableReason(scope, command, &snapshot);
+        !reason.isEmpty()) {
+        return reason;
+    }
+    return controllerControlStateUnavailableReason(snapshot, command);
+}
+
+bool WorkbenchController::canExecuteControllerControl(
+    const Data::ControllerConnectionScope &scope,
+    Data::ControllerControlCommand command) const
+{
+    return command != Data::ControllerControlCommand::None
+           && controllerControlUnavailableReason(scope, command).isEmpty();
+}
+
+bool WorkbenchController::canExecuteSelectedControllerControl(
+    Data::ControllerControlCommand command) const
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    return scope && canExecuteControllerControl(*scope, command);
+}
+
+std::optional<Data::ControllerControlCommand> WorkbenchController::quickControllerControlCommand(
+    const Data::ControllerConnectionScope &scope, ControllerQuickControlAction action) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return std::nullopt;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.scope != scope || !snapshot.controllerState)
+        return std::nullopt;
+
+    using Command = Data::ControllerControlCommand;
+    using ServiceState = Data::ControllerServiceState;
+    const ServiceState serviceState = snapshot.controllerState->serviceState;
+    switch (action) {
+    case ControllerQuickControlAction::Run: {
+        if (serviceState != ServiceState::Shutdown
+            && serviceState != ServiceState::OperationalSafe
+            && serviceState != ServiceState::Paused) {
+            break;
+        }
+        const ControllerStartCommandSelection startSelection
+            = controllerStartCommandSelection(m_projectService, scope);
+        if (!startSelection.command)
+            break;
+        if (serviceState == ServiceState::Paused)
+            return Command::Resume;
+        if (serviceState == ServiceState::Shutdown)
+            return Command::RestoreActivePackage;
+        return startSelection.command;
+    }
+    case ControllerQuickControlAction::Debug:
+        if (serviceState == ServiceState::Running)
+            return Command::Pause;
+        if (serviceState == ServiceState::Paused)
+            return Command::Resume;
+        break;
+    case ControllerQuickControlAction::Stop:
+        if (serviceState == ServiceState::Running || serviceState == ServiceState::Paused)
+            return Command::ControlledStop;
+        if (serviceState == ServiceState::OperationalSafe)
+            return Command::EnterConfigurationMode;
+        break;
+    }
+    return std::nullopt;
+}
+
+QString WorkbenchController::quickControllerControlUnavailableReason(
+    const Data::ControllerConnectionScope &scope, ControllerQuickControlAction action) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (provider && m_controllerStartupStates.contains(provider))
+        return Tr::tr("Automatic controller startup is in progress.");
+    if (provider && m_controllerStopStates.contains(provider))
+        return Tr::tr("Controller stop verification is in progress.");
+
+    Data::ControllerConnectionSnapshot snapshot;
+    if (const QString reason = controllerControlCommonUnavailableReason(
+            scope, Data::ControllerControlCommand::None, &snapshot);
+        !reason.isEmpty()) {
+        return reason;
+    }
+
+    std::optional<Data::ControllerControlCommand> selectedStartCommand;
+    if (action == ControllerQuickControlAction::Run && snapshot.controllerState
+        && (snapshot.controllerState->serviceState == Data::ControllerServiceState::Shutdown
+            || snapshot.controllerState->serviceState
+                   == Data::ControllerServiceState::OperationalSafe
+            || snapshot.controllerState->serviceState == Data::ControllerServiceState::Paused)) {
+        const ControllerStartCommandSelection startSelection
+            = controllerStartCommandSelection(m_projectService, scope);
+        if (!startSelection.command)
+            return startSelection.unavailableReason;
+        selectedStartCommand = startSelection.command;
+        if (*selectedStartCommand == Data::ControllerControlCommand::StartFreeRun) {
+            if (const QString reason = masterTimingModeUnavailableReason(
+                    scope.projectId, scope.masterId, Data::MasterTimingMode::FreeRun);
+                !reason.isEmpty()) {
+                return reason;
+            }
+        }
+    }
+
+    const std::optional<Data::ControllerControlCommand> command
+        = quickControllerControlCommand(scope, action);
+    if (command == Data::ControllerControlCommand::RestoreActivePackage
+        && action == ControllerQuickControlAction::Run) {
+        QTC_ASSERT(selectedStartCommand, return Tr::tr("No controller start mode is selected."));
+        return controllerStartupUnavailableReason(provider, snapshot, *selectedStartCommand);
+    }
+    if (action == ControllerQuickControlAction::Stop)
+        return controllerStopUnavailableReason(provider, snapshot);
+    if (command)
+        return controllerControlUnavailableReason(scope, *command);
+    if (!snapshot.controllerState)
+        return Tr::tr("The controller state is unavailable.");
+
+    switch (action) {
+    case ControllerQuickControlAction::Run:
+        return Tr::tr("Run is available while the controller is in Shutdown, OP_SAFE, or Paused.");
+    case ControllerQuickControlAction::Debug:
+        return Tr::tr("Pause or Resume is available only while the controller is Running or Paused.");
+    case ControllerQuickControlAction::Stop:
+        return Tr::tr("Stop is available only while the controller is Running, Paused, or OP_SAFE.");
+    }
+    return Tr::tr("The controller service state does not allow this operation.");
+}
+
+bool WorkbenchController::controllerStartupInProgress(
+    const Data::ControllerConnectionScope &scope) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return false;
+    const auto state = m_controllerStartupStates.constFind(provider);
+    return state != m_controllerStartupStates.cend() && state->scope == scope;
+}
+
+bool WorkbenchController::controllerStopInProgress(const Data::ControllerConnectionScope &scope) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return false;
+    const auto state = m_controllerStopStates.constFind(provider);
+    return state != m_controllerStopStates.cend() && state->scope == scope;
+}
+
+Utils::Result<> WorkbenchController::executeQuickControllerControl(
+    const Data::ControllerConnectionScope &scope, ControllerQuickControlAction action)
+{
+    const QString unavailableReason = quickControllerControlUnavailableReason(scope, action);
+    if (!unavailableReason.isEmpty())
+        return Utils::ResultError(unavailableReason);
+
+    const std::optional<Data::ControllerControlCommand> command
+        = quickControllerControlCommand(scope, action);
+    if (!command)
+        return Utils::ResultError(
+            Tr::tr("The controller service state does not allow this operation."));
+
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable."));
+    if (action == ControllerQuickControlAction::Stop)
+        return beginControllerStop(provider, provider->connectionSnapshot());
+    if (*command == Data::ControllerControlCommand::RestoreActivePackage) {
+        const ControllerStartCommandSelection startSelection
+            = controllerStartCommandSelection(m_projectService, scope);
+        if (!startSelection.command)
+            return Utils::ResultError(startSelection.unavailableReason);
+        return beginControllerStartup(
+            provider, provider->connectionSnapshot(), *startSelection.command);
+    }
+
+    Data::ControllerControlRequest request;
+    request.command = *command;
+    return executeControllerControl(scope, request);
+}
+
+Utils::Result<> WorkbenchController::connectController(
+    const Data::ControllerConnectionScope &scope)
+{
+    if (!controllerConnectionScopeIsValid(scope))
+        return Utils::ResultError(Tr::tr("Select a valid EtherCAT Master before connecting."));
+    if (!canConnectController(scope))
+        return Utils::ResultError(Tr::tr("The selected controller connection is not ready."));
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
+    return provider->connectToController({scope, controllerConnectionSelection(scope).profileId});
+}
+
+Utils::Result<> WorkbenchController::connectSelectedController()
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return Utils::ResultError(Tr::tr("Select a valid EtherCAT Master before connecting."));
+    return connectController(*scope);
+}
+
+Utils::Result<> WorkbenchController::disconnectSelectedController()
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return Utils::ResultError(Tr::tr("Select the connected EtherCAT Master first."));
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    if (provider
+        && controllerControlLeaseOwnershipUnverified(provider->connectionSnapshot())) {
+        return Utils::ResultError(
+            Tr::tr("The controller control lease ownership is unverified for this session."));
+    }
+    if (!canDisconnectSelectedController()) {
+        return Utils::ResultError(
+            Tr::tr("The selected EtherCAT Master does not own an active connection."));
+    }
+    if (!provider)
+        return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable."));
+    return provider->disconnectFromController();
+}
+
+Utils::Result<> WorkbenchController::refreshSelectedController()
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return Utils::ResultError(Tr::tr("Select the connected EtherCAT Master first."));
+    if (!canRefreshSelectedController())
+        return Utils::ResultError(Tr::tr("The controller connection is not ready to refresh."));
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
+    return provider->refreshController();
+}
+
+Utils::Result<> WorkbenchController::executeControllerControl(
+    const Data::ControllerConnectionScope &scope,
+    const Data::ControllerControlRequest &request)
+{
+    if (request.command == Data::ControllerControlCommand::None)
+        return Utils::ResultError(Tr::tr("Select a controller control operation."));
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    const QString unavailableReason = controllerControlUnavailableReason(scope, request.command);
+    if (!unavailableReason.isEmpty())
+        return Utils::ResultError(unavailableReason);
+    QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
+    if (request.command == Data::ControllerControlCommand::ResetFault) {
+        const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+        QTC_ASSERT(
+            snapshot.controllerState,
+            return Utils::ResultError(Tr::tr("The controller state is unavailable.")));
+        if (!request.expectedLatchedFaults || !request.expectedAlarmSequence) {
+            return Utils::ResultError(
+                Tr::tr("Refresh the controller and confirm the current latched fault first."));
+        }
+        if (request.expectedLatchedFaults != snapshot.controllerState->latchedFaults
+            || request.expectedAlarmSequence
+                   != snapshot.controllerState->latestAlarmSequence) {
+            return Utils::ResultError(
+                Tr::tr(
+                    "The controller fault changed before confirmation. Refresh diagnostics and "
+                    "review the latest alarm."));
+        }
+    }
+    return provider->executeControlCommand(request);
+}
+
+Utils::Result<> WorkbenchController::executeSelectedControllerControl(
+    const Data::ControllerControlRequest &request)
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return Utils::ResultError(Tr::tr("Select the connected EtherCAT Master first."));
+    return executeControllerControl(*scope, request);
+}
+
+QString WorkbenchController::packageDeploymentUnavailableReason(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (m_shuttingDown)
+        return Tr::tr("The controller connection workflow is shutting down.");
+    if (!controllerConnectionScopeIsValid(scope))
+        return Tr::tr("The requested EtherCAT Master is not available in an open project.");
+
+    const ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+    if (!selection.providerExplicitlySelected || !selection.providerId.isValid())
+        return Tr::tr("Select a controller adapter for the active EtherCAT Master.");
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return Tr::tr("The selected controller adapter is unavailable.");
+    if (!provider->isAvailable())
+        return Tr::tr("The selected controller adapter is not available.");
+    if (!selection.profileExplicitlySelected || selection.profileId.isNull()) {
+        return Tr::tr(
+            "Select a controller connection profile for the active EtherCAT Master.");
+    }
+    if (!provider->supportsPackageDeployment())
+        return Tr::tr("The connected controller adapter does not support package deployment.");
+
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.state != Data::ControllerConnectionState::Connected
+        && snapshot.state != Data::ControllerConnectionState::Degraded) {
+        return Tr::tr("Connect the controller before deploying a package.");
+    }
+    if (snapshot.scope != scope)
+        return Tr::tr("The connected controller session belongs to a different EtherCAT Master.");
+    if (snapshot.profileId != selection.profileId) {
+        return Tr::tr(
+            "The connected controller session uses a different connection profile.");
+    }
+    if (snapshot.mock)
+        return Tr::tr("Controller package deployment is unavailable for a Mock connection.");
+    if (snapshot.readOnly)
+        return Tr::tr("The controller connection is read-only.");
+    if (!snapshot.session || !snapshot.session->sessionId || !snapshot.session->bootId)
+        return Tr::tr("The controller session identity is not available.");
+    if (!snapshot.session->ownsControlLease)
+        return Tr::tr("Acquire the control lease before deploying a package.");
+    if (!snapshot.capability || !snapshot.capability->transactionalBulk) {
+        return Tr::tr(
+            "The controller does not support transactional package upload.");
+    }
+    if (snapshot.controlProgress.state == Data::ControllerControlState::Pending)
+        return Tr::tr("Wait for the current controller control operation to finish.");
+
+    using DeploymentState = Data::ControllerPackageDeploymentState;
+    switch (snapshot.packageDeploymentProgress.state) {
+    case DeploymentState::Uploading:
+    case DeploymentState::Committing:
+    case DeploymentState::Validating:
+    case DeploymentState::Activating:
+    case DeploymentState::RollingBack:
+    case DeploymentState::Canceling:
+        return Tr::tr("Wait for the current package deployment to finish.");
+    case DeploymentState::OutcomeUnknown:
+        return Tr::tr(
+            "Reconnect and verify the authoritative package state before starting another "
+            "deployment.");
+    case DeploymentState::Idle:
+    case DeploymentState::Succeeded:
+    case DeploymentState::Canceled:
+    case DeploymentState::Failed:
+        break;
+    }
+
+    if (!snapshot.controllerState || !snapshot.controllerState->ready
+        || snapshot.controllerState->serviceState != Data::ControllerServiceState::Shutdown) {
+        return Tr::tr(
+            "Enter configuration mode before deploying a controller package.");
+    }
+    return {};
+}
+
+bool WorkbenchController::canDeployControllerPackage(
+    const Data::ControllerConnectionScope &scope) const
+{
+    return packageDeploymentUnavailableReason(scope).isEmpty();
+}
+
+bool WorkbenchController::canCancelControllerPackageDeployment(
+    const Data::ControllerConnectionScope &scope) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider || !provider->isAvailable() || !provider->supportsPackageDeployment())
+        return false;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.scope != scope)
+        return false;
+    using DeploymentState = Data::ControllerPackageDeploymentState;
+    return snapshot.packageDeploymentProgress.state == DeploymentState::Uploading
+           || snapshot.packageDeploymentProgress.state == DeploymentState::Committing;
+}
+
+Utils::Result<> WorkbenchController::deployControllerPackage(
+    const Data::ControllerConnectionScope &scope,
+    const Data::ControllerPackageDeploymentRequest &request)
+{
+    if (request.activate || request.rollbackOnActivationFailure) {
+        return Utils::ResultError(
+            Tr::tr(
+                "Legacy package deployment only stages and validates packages; use the "
+                "trusted project activation workflow to activate a runtime."));
+    }
+    const QString unavailableReason = packageDeploymentUnavailableReason(scope);
+    if (!unavailableReason.isEmpty())
+        return Utils::ResultError(unavailableReason);
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
+    return provider->deployPackage(request);
+}
+
+Utils::Result<> WorkbenchController::cancelControllerPackageDeployment(
+    const Data::ControllerConnectionScope &scope, const QString &operationId)
+{
+    if (!canCancelControllerPackageDeployment(scope)) {
+        return Utils::ResultError(
+            Tr::tr("Package deployment can only be canceled during upload or commit."));
+    }
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
+    return provider->cancelPackageDeployment(operationId);
+}
+
+QString WorkbenchController::trustedRuntimePackageActivationUnavailableReason(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (m_shuttingDown)
+        return Tr::tr("The trusted package activation workflow is shutting down.");
+    if (!controllerConnectionScopeIsValid(scope)) {
+        return Tr::tr(
+            "Select an EtherCAT Master in an open project before trusted activation.");
+    }
+    if (!m_runtimePackageActivationService) {
+        return Tr::tr("The trusted package activation service is unavailable.");
+    }
+    if (!m_runtimePackageCompilerPreparationCoordinatorAvailable) {
+        return Tr::tr(
+            "No API-042 compiler preparation coordinator is available. Configure the trusted "
+            "compiler workflow before activation.");
+    }
+    if (!m_runtimePackageActivationPreparation) {
+        QList<Core::RuntimePackageCompilerProvider *> availableCompilers;
+        QStringList unavailableCompilerReasons;
+        QList<Core::RuntimePackageCompilerProjectRequestBuilder *> availableBuilders;
+        QStringList unavailableBuilderReasons;
+        if (m_providerRegistry) {
+            for (Core::Provider *provider :
+                 m_providerRegistry->providers(
+                     Core::ProviderKind::RuntimePackageCompiler)) {
+                auto *compiler = qobject_cast<Core::RuntimePackageCompilerProvider *>(provider);
+                if (!compiler)
+                    continue;
+                if (compiler->isAvailable()) {
+                    availableCompilers.append(compiler);
+                } else if (const QString reason = compiler->unavailableReason().trimmed();
+                           !reason.isEmpty()) {
+                    unavailableCompilerReasons.append(reason);
+                }
+            }
+            for (Core::Provider *provider :
+                 m_providerRegistry->providers(
+                     Core::ProviderKind::RuntimePackageCompilerProjectRequestBuilder)) {
+                auto *builder
+                    = qobject_cast<Core::RuntimePackageCompilerProjectRequestBuilder *>(provider);
+                if (!builder)
+                    continue;
+                if (builder->isAvailable()) {
+                    availableBuilders.append(builder);
+                } else if (const QString reason = builder->unavailableReason().trimmed();
+                           !reason.isEmpty()) {
+                    unavailableBuilderReasons.append(reason);
+                }
+            }
+        }
+        if (availableCompilers.size() != 1) {
+            if (availableCompilers.isEmpty() && unavailableCompilerReasons.size() == 1) {
+                return Tr::tr("Trusted project compiler is unavailable: %1")
+                    .arg(unavailableCompilerReasons.constFirst());
+            }
+            return availableCompilers.isEmpty()
+                       ? Tr::tr(
+                             "No API-042 project compiler is installed. Configure the trusted "
+                             "compiler workflow, then compile and verify this exact project.")
+                       : Tr::tr("Trusted project compiler selection is ambiguous.");
+        }
+        if (availableBuilders.size() != 1) {
+            if (availableBuilders.isEmpty() && unavailableBuilderReasons.size() == 1) {
+                return Tr::tr("Trusted compiler inputs are unavailable: %1")
+                    .arg(unavailableBuilderReasons.constFirst());
+            }
+            return availableBuilders.isEmpty()
+                       ? Tr::tr("No trusted compiler input profile is installed.")
+                       : Tr::tr("Trusted compiler input selection is ambiguous.");
+        }
+        return Tr::tr("Compile and verify this exact open project before trusted activation.");
+    }
+    if (m_runtimePackageActivationPreparation->scope != scope) {
+        return Tr::tr(
+            "The verified compiler result belongs to a different project or EtherCAT Master.");
+    }
+    if (!m_runtimePackageActivationPreparation->isValid()) {
+        return Tr::tr("The verified compiler result is incomplete or invalid.");
+    }
+    return {};
+}
+
+QString WorkbenchController::trustedRuntimePackageActivationStatus(
+    const Data::ControllerConnectionScope &scope) const
+{
+    const QString unavailable
+        = trustedRuntimePackageActivationUnavailableReason(scope);
+    if (!unavailable.isEmpty())
+        return unavailable;
+
+    QTC_ASSERT(
+        m_runtimePackageActivationPreparation,
+        return Tr::tr("Trusted activation preparation is unavailable."));
+    QTC_ASSERT(
+        m_runtimePackageActivationService,
+        return Tr::tr("The trusted package activation service is unavailable."));
+    const auto record = m_runtimePackageActivationService->record(
+        m_runtimePackageActivationPreparation->operationId);
+    if (!record)
+        return Tr::tr("Verified project package ready for trusted activation.");
+    if (!Data::runtimePackageActivationOutcomeIsTerminal(record->outcome()))
+        return Tr::tr("Trusted package activation is in progress.");
+    if (record->outcome()
+            == Data::RuntimePackageActivationOutcome::
+                SucceededWithExistingPackage
+        || record->outcome()
+               == Data::RuntimePackageActivationOutcome::
+                   SucceededWithActivatedPackage) {
+        return Tr::tr("The package is active and its verified binding is saved in the project.");
+    }
+    return record->detail().isEmpty()
+               ? Tr::tr("Trusted package activation did not complete successfully.")
+               : record->detail();
+}
+
+bool WorkbenchController::canStartTrustedRuntimePackageActivation(
+    const Data::ControllerConnectionScope &scope) const
+{
+    return trustedRuntimePackageActivationUnavailableReason(scope).isEmpty();
+}
+
+Utils::Result<>
+WorkbenchController::setTrustedRuntimePackageActivationPreparation(
+    const Core::RuntimePackageActivationPreparationRequest &request)
+{
+    if (!m_runtimePackageCompilerPreparationCoordinatorAvailable) {
+        return Utils::ResultError(
+            Tr::tr("The trusted compiler preparation coordinator is unavailable."));
+    }
+    if (!request.isValid())
+        return Utils::ResultError(Tr::tr("The verified compiler result is incomplete or invalid."));
+    if (!controllerConnectionScopeIsValid(request.scope)) {
+        return Utils::ResultError(
+            Tr::tr("The verified compiler result does not identify an open EtherCAT Master."));
+    }
+
+    QList<Core::RuntimePackageCompilerProvider *> availableCompilers;
+    if (m_providerRegistry) {
+        for (Core::Provider *provider :
+             m_providerRegistry->providers(
+                 Core::ProviderKind::RuntimePackageCompiler)) {
+            auto *compiler = qobject_cast<Core::RuntimePackageCompilerProvider *>(provider);
+            if (compiler && compiler->isAvailable())
+                availableCompilers.append(compiler);
+        }
+    }
+    if (availableCompilers.size() != 1) {
+        return Utils::ResultError(
+            availableCompilers.isEmpty()
+                ? Tr::tr(
+                      "No API-042 project compiler is installed; unverified activation input was "
+                      "rejected.")
+                : Tr::tr("Project compiler selection is ambiguous; activation was rejected."));
+    }
+    if (!request.compilerActivationProof
+        || availableCompilers.constFirst()->id().toString()
+               != request.compilerActivationProof->compilerProviderId) {
+        return Utils::ResultError(
+            Tr::tr("The available project compiler does not own this verified package."));
+    }
+
+    m_runtimePackageActivationPreparation = request;
+    emit trustedRuntimePackageActivationChanged();
+    return Utils::ResultOk;
+}
+
+void WorkbenchController::clearTrustedRuntimePackageActivationPreparation()
+{
+    if (!m_runtimePackageActivationPreparation)
+        return;
+    m_runtimePackageActivationPreparation.reset();
+    emit trustedRuntimePackageActivationChanged();
+}
+
+void WorkbenchController::setRuntimePackageCompilerPreparationCoordinatorAvailable(bool available)
+{
+    if (m_runtimePackageCompilerPreparationCoordinatorAvailable == available)
+        return;
+    m_runtimePackageCompilerPreparationCoordinatorAvailable = available;
+    if (!available)
+        m_runtimePackageActivationPreparation.reset();
+    emit trustedRuntimePackageActivationChanged();
+}
+
+Utils::Result<> WorkbenchController::startTrustedRuntimePackageActivation(
+    const Data::ControllerConnectionScope &scope)
+{
+    const QString unavailable
+        = trustedRuntimePackageActivationUnavailableReason(scope);
+    if (!unavailable.isEmpty())
+        return Utils::ResultError(unavailable);
+    QTC_ASSERT(
+        m_runtimePackageActivationPreparation,
+        return Utils::ResultError(Tr::tr("Trusted activation preparation is unavailable.")));
+    QTC_ASSERT(
+        m_runtimePackageActivationService,
+        return Utils::ResultError(Tr::tr("The trusted package activation service is unavailable.")));
+
+    const Core::RuntimePackageActivationPreparationResult prepared
+        = m_runtimePackageActivationService->prepare(
+            *m_runtimePackageActivationPreparation);
+    if (!prepared.isValid() || !prepared.request) {
+        return Utils::ResultError(
+            prepared.detail.isEmpty()
+                ? Tr::tr("Trusted activation preparation was rejected.")
+                : prepared.detail);
+    }
+
+    // The Workbench never constructs an activation request and never calls a
+    // controller ActivatePackage command directly. Only the exact request
+    // returned by prepare() is admitted to start().
+    const Core::RuntimePackageActivationCommandResult started
+        = m_runtimePackageActivationService->start(*prepared.request);
+    if (!started.accepted()) {
+        return Utils::ResultError(
+            started.detail.isEmpty()
+                ? Tr::tr("Trusted package activation was not accepted.")
+                : started.detail);
+    }
+    writeControllerOutput(
+        Tr::tr("Trusted package activation started [%1].")
+            .arg(prepared.request->identity().operationId().value()));
+    emit trustedRuntimePackageActivationChanged();
+    return Utils::ResultOk;
+}
+
+void WorkbenchController::writeControllerOutput(
+    const QString &message, ControllerOutputLevel level)
+{
+    const QString normalized = message.trimmed();
+    if (!normalized.isEmpty())
+        emit controllerOutputRequested(normalized, level);
+}
+
+bool WorkbenchController::scanAvailable() const
+{
+    return scanProviderPresentation().isAvailable();
+}
+
+bool WorkbenchController::diagnosticsAvailable() const
+{
+    return m_diagnosticsProvider.isAvailable();
+}
+
+bool WorkbenchController::canInsertDeviceOnSelectedMaster() const
+{
+    return !m_shuttingDown && !selectedOfflineMasterId().isNull();
+}
+
+bool WorkbenchController::canAddSelectedDeviceToMaster() const
+{
+    if (m_shuttingDown || !m_selectionService || !m_deviceRepository)
+        return false;
+    const Core::PropertyPageContext context = m_treeModel.contextForNodeId(
+        m_selectionService->currentNodeId());
+    if (context.nodeKind != Core::WorkbenchNodeKind::Device)
+        return false;
+    const std::optional<Data::DeviceDescription> device = m_deviceRepository->device(context.nodeId);
+    return device && device->summary.supported && activeOfflineMasterTarget().has_value();
+}
+
+bool WorkbenchController::canRemoveSelectedOfflineSlave() const
+{
+    return !m_shuttingDown
+           && selectedSlaveContext(m_treeModel, m_selectionService, m_projectService).has_value();
+}
+
+bool WorkbenchController::canMoveSelectedOfflineSlaveUp() const
+{
+    if (m_shuttingDown)
+        return false;
+    const std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    return selected && selected->index > 0;
+}
+
+bool WorkbenchController::canMoveSelectedOfflineSlaveDown() const
+{
+    if (m_shuttingDown)
+        return false;
+    const std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    return selected && selected->index + 1 < selected->slaves.size();
+}
+
+bool WorkbenchController::canActivateSelectedProject() const
+{
+    if (m_shuttingDown)
+        return false;
+    const std::optional<Data::ProjectSnapshot> project
+        = selectedProject(m_treeModel, m_selectionService, m_projectService);
+    return project && project->valid && project->id != m_projectService->activeProjectId();
+}
+
+bool WorkbenchController::canCopyNodeId(const Data::NodeId &nodeId) const
+{
+    if (m_shuttingDown || nodeId.isNull())
+        return false;
+    const Core::PropertyPageContext context = m_treeModel.contextForNodeId(nodeId);
+    return context.nodeKind != Core::WorkbenchNodeKind::None
+           && context.nodeKind != Core::WorkbenchNodeKind::Placeholder;
+}
+
+std::optional<OfflineMasterTarget> WorkbenchController::activeOfflineMasterTarget() const
+{
+    if (m_shuttingDown)
+        return std::nullopt;
+    const std::optional<ActiveMasterContext> target = activeMasterContext(m_projectService);
+    if (!target)
+        return std::nullopt;
+    const auto master = std::find_if(
+        target->project.nodes.cbegin(),
+        target->project.nodes.cend(),
+        [&target](const Data::ProjectNodeSnapshot &node) {
+            return node.kind == Data::ProjectNodeKind::Master && node.id == target->masterId;
+        });
+    QTC_ASSERT(master != target->project.nodes.cend(), return std::nullopt);
+    return OfflineMasterTarget{
+        target->project.id, target->masterId, target->project.name, master->name};
+}
+
+Utils::Result<> WorkbenchController::addSelectedDeviceToMaster(
+    const OfflineMasterTarget &target)
+{
+    if (m_shuttingDown || !m_selectionService || !m_deviceRepository || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    const std::optional<ActiveMasterContext> current = activeMasterContext(
+        m_projectService, target.masterId);
+    if (!current || current->project.id != target.projectId) {
+        return Utils::ResultError(Tr::tr(
+            "The displayed active offline master is no longer current. Review the updated "
+            "target and try again."));
+    }
+    const Core::PropertyPageContext context = m_treeModel.contextForNodeId(
+        m_selectionService->currentNodeId());
+    if (context.nodeKind != Core::WorkbenchNodeKind::Device)
+        return Utils::ResultError(Tr::tr("Select an ESI device before adding it."));
+    return addDeviceToMaster(context.nodeId, target.masterId);
+}
+
+Data::NodeId WorkbenchController::selectedOfflineMasterId() const
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return {};
+    const Core::PropertyPageContext context = m_treeModel.contextForNodeId(
+        m_selectionService->currentNodeId());
+    if (context.nodeKind != Core::WorkbenchNodeKind::Master)
+        return {};
+    const std::optional<ActiveMasterContext> target = activeMasterContext(
+        m_projectService, context.nodeId);
+    if (!target || target->project.id != context.projectId)
+        return {};
+    return target->masterId;
+}
+
+Utils::Result<> WorkbenchController::addDeviceToMaster(
+    const Data::NodeId &deviceId, const Data::NodeId &masterId)
+{
+    if (m_shuttingDown || !m_selectionService || !m_deviceRepository || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    if (masterId.isNull())
+        return Utils::ResultError(Tr::tr("The selected offline EtherCAT Master is unavailable."));
+    const std::optional<Data::DeviceDescription> device = m_deviceRepository->device(deviceId);
+    if (!device)
+        return Utils::ResultError(Tr::tr("The selected ESI device is no longer available."));
+    if (!device->summary.supported) {
+        return Utils::ResultError(
+            Tr::tr("The selected ESI device has unsupported structures and cannot be added."));
+    }
+    std::optional<ActiveMasterContext> target = activeMasterContext(m_projectService, masterId);
+    if (!target)
+        return Utils::ResultError(Tr::tr("The selected offline EtherCAT Master is unavailable."));
+
+    const Data::NodeId slaveId = Data::NodeId::create();
+    const QString requestedName = device->summary.name.isEmpty() ? device->summary.typeName
+                                                                 : device->summary.name;
+    int nextPosition = 0;
+    for (const Data::OfflineSlaveConfiguration &slave : std::as_const(target->slaves))
+        nextPosition = qMax(nextPosition, slave.position + 1);
+    target->slaves.append(offlineSlaveFromDevice(
+        *device,
+        slaveId,
+        target->masterId,
+        nextPosition,
+        uniqueSlaveName(requestedName, target->slaves)));
+    const Utils::Result<> result
+        = m_projectService
+              ->replaceOfflineSlaves(target->project.id, target->masterId, target->slaves);
+    if (!result)
+        return result;
+    m_selectionService->setCurrentNodeId(slaveId);
+    return Utils::ResultOk;
+}
+
+std::optional<OfflineSlaveRemovalCandidate>
+WorkbenchController::selectedOfflineSlaveRemovalCandidate() const
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return std::nullopt;
+    const std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    if (!selected)
+        return std::nullopt;
+    const Data::OfflineSlaveConfiguration &slave = selected->slaves.at(selected->index);
+    return OfflineSlaveRemovalCandidate{
+        selected->project.id, selected->masterId, slave.id, slave.name, slave.position, slave};
+}
+
+Utils::Result<> WorkbenchController::removeOfflineSlave(
+    const OfflineSlaveRemovalCandidate &candidate)
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    if (m_selectionService->currentNodeId() != candidate.slaveId) {
+        return Utils::ResultError(
+            Tr::tr("The selected offline slave changed while confirmation was open; "
+                   "nothing was removed."));
+    }
+    std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    if (!selected || selected->project.id != candidate.projectId
+        || selected->masterId != candidate.masterId || selected->slaveId != candidate.slaveId) {
+        return Utils::ResultError(
+            Tr::tr("The offline slave is no longer available; nothing was removed."));
+    }
+    if (selected->slaves.at(selected->index) != candidate.expectedSlave) {
+        return Utils::ResultError(Tr::tr(
+            "The offline slave configuration changed while confirmation was open; nothing was "
+            "removed. Confirm the current configuration again."));
+    }
+
+    selected->slaves.removeAt(selected->index);
+    normalizePositions(&selected->slaves);
+    const Data::NodeId nextSelection
+        = selected->slaves.isEmpty()
+              ? selected->masterId
+              : selected->slaves.at(qMin(selected->index, selected->slaves.size() - 1)).id;
+    const Utils::Result<> result
+        = m_projectService
+              ->replaceOfflineSlaves(selected->project.id, selected->masterId, selected->slaves);
+    if (!result)
+        return result;
+    m_selectionService->setCurrentNodeId(nextSelection);
+    return Utils::ResultOk;
+}
+
+Utils::Result<> WorkbenchController::moveSelectedOfflineSlaveUp()
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    if (!selected || selected->index <= 0)
+        return Utils::ResultError(Tr::tr("The selected offline slave cannot move up."));
+    selected->slaves.swapItemsAt(selected->index, selected->index - 1);
+    normalizePositions(&selected->slaves);
+    return m_projectService
+        ->replaceOfflineSlaves(selected->project.id, selected->masterId, selected->slaves);
+}
+
+Utils::Result<> WorkbenchController::moveSelectedOfflineSlaveDown()
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    if (!selected || selected->index + 1 >= selected->slaves.size())
+        return Utils::ResultError(Tr::tr("The selected offline slave cannot move down."));
+    selected->slaves.swapItemsAt(selected->index, selected->index + 1);
+    normalizePositions(&selected->slaves);
+    return m_projectService
+        ->replaceOfflineSlaves(selected->project.id, selected->masterId, selected->slaves);
+}
+
+Utils::Result<> WorkbenchController::activateSelectedProject()
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline project service is unavailable."));
+    const std::optional<Data::ProjectSnapshot> project
+        = selectedProject(m_treeModel, m_selectionService, m_projectService);
+    if (!project)
+        return Utils::ResultError(Tr::tr("Select an open EtherCAT project first."));
+    if (!project->valid) {
+        return Utils::ResultError(
+            Tr::tr("The selected EtherCAT project is invalid and cannot be activated."));
+    }
+    if (project->id == m_projectService->activeProjectId())
+        return Utils::ResultError(Tr::tr("The selected EtherCAT project is already active."));
+    return m_projectService->activateProject(project->id);
+}
+
+Utils::Result<> WorkbenchController::renameProject(
+    const Data::NodeId &projectId, const QString &name)
+{
+    if (m_shuttingDown || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline project service is unavailable."));
+    return m_projectService->renameProject(projectId, name);
+}
+
+Utils::Result<> WorkbenchController::renameOfflineSlave(
+    const Data::NodeId &projectId, const Data::NodeId &slaveId, const QString &name)
+{
+    if (m_shuttingDown || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    const QString trimmedName = name.trimmed();
+    if (trimmedName.isEmpty())
+        return Utils::ResultError(Tr::tr("Offline slave name cannot be empty."));
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(projectId);
+    if (!project || !project->valid)
+        return Utils::ResultError(Tr::tr("The EtherCAT project is not available."));
+    const auto selected = std::find_if(
+        project->slaves.cbegin(), project->slaves.cend(), [&slaveId](const auto &slave) {
+            return slave.id == slaveId;
+        });
+    if (selected == project->slaves.cend())
+        return Utils::ResultError(Tr::tr("The offline slave is not available."));
+    if (selected->name == trimmedName)
+        return Utils::ResultOk;
+
+    QList<Data::OfflineSlaveConfiguration> slaves = slavesForMaster(*project, selected->masterId);
+    const auto editable = std::find_if(slaves.begin(), slaves.end(), [&slaveId](const auto &slave) {
+        return slave.id == slaveId;
+    });
+    QTC_ASSERT(
+        editable != slaves.end(),
+        return Utils::ResultError(Tr::tr("The offline slave is not part of its EtherCAT master.")));
+    editable->name = trimmedName;
+    return m_projectService->replaceOfflineSlaves(projectId, selected->masterId, slaves);
+}
+
+Utils::Result<> WorkbenchController::renameStructuralNode(
+    const Data::NodeId &projectId, const Data::NodeId &nodeId, const QString &name)
+{
+    if (m_shuttingDown || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    return m_projectService->renameStructuralNode(projectId, nodeId, name);
+}
+
+Utils::Result<> WorkbenchController::setMasterConfiguration(
+    const Data::NodeId &projectId,
+    const Data::NodeId &masterId,
+    const Data::MasterConfiguration &configuration)
+{
+    if (m_shuttingDown || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    if (const QString reason
+        = masterTimingModeUnavailableReason(projectId, masterId, configuration.timingMode);
+        !reason.isEmpty()) {
+        return Utils::ResultError(reason);
+    }
+    return m_projectService->setMasterConfiguration(projectId, masterId, configuration);
+}
+
+QString WorkbenchController::masterTimingModeUnavailableReason(
+    const Data::NodeId &projectId,
+    const Data::NodeId &masterId,
+    Data::MasterTimingMode timingMode) const
+{
+    if (timingMode != Data::MasterTimingMode::FreeRun)
+        return {};
+    if (m_shuttingDown || !m_projectService || !m_deviceRepository)
+        return Tr::tr("The EtherCAT project or ESI repository service is unavailable.");
+
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(projectId);
+    if (!project || !project->valid)
+        return Tr::tr("The EtherCAT project is not available.");
+    const auto master = std::find_if(
+        project->nodes.cbegin(),
+        project->nodes.cend(),
+        [&masterId](const Data::ProjectNodeSnapshot &node) {
+            return node.id == masterId && node.kind == Data::ProjectNodeKind::Master;
+        });
+    if (master == project->nodes.cend())
+        return Tr::tr("The EtherCAT master is not available.");
+
+    const Data::ControllerConnectionScope scope{projectId, masterId};
+    if (controllerConnectionProvider(scope)) {
+        const Data::ControllerConnectionSnapshot snapshot = controllerConnectionSnapshot(scope);
+        if (snapshot.scope == scope
+            && (snapshot.state == Data::ControllerConnectionState::Connected
+                || snapshot.state == Data::ControllerConnectionState::Degraded)
+            && snapshot.topology && !snapshot.topology->result
+            && !snapshot.topology->slaves.isEmpty()) {
+            return freeRunUnavailableReason(
+                freeRunCompatibilityReport(*snapshot.topology, m_deviceRepository));
+        }
+    }
+    return freeRunUnavailableReason(
+        freeRunCompatibilityReport(slavesForMaster(*project, masterId), m_deviceRepository));
+}
+
+Utils::Result<> WorkbenchController::setOfflineSlaveAlias(
+    const Data::NodeId &projectId, const Data::NodeId &slaveId, quint16 alias)
+{
+    if (m_shuttingDown || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(projectId);
+    if (!project || !project->valid)
+        return Utils::ResultError(Tr::tr("The EtherCAT project is not available."));
+    const auto selected = std::find_if(
+        project->slaves.cbegin(), project->slaves.cend(), [&slaveId](const auto &slave) {
+            return slave.id == slaveId;
+        });
+    if (selected == project->slaves.cend())
+        return Utils::ResultError(Tr::tr("The offline slave is not available."));
+    if (selected->alias == alias)
+        return Utils::ResultOk;
+
+    QList<Data::OfflineSlaveConfiguration> slaves = slavesForMaster(*project, selected->masterId);
+    const auto editable = std::find_if(slaves.begin(), slaves.end(), [&slaveId](const auto &slave) {
+        return slave.id == slaveId;
+    });
+    QTC_ASSERT(
+        editable != slaves.end(),
+        return Utils::ResultError(Tr::tr("The offline slave is not part of its EtherCAT master.")));
+    editable->alias = alias;
+    return m_projectService->replaceOfflineSlaves(projectId, selected->masterId, slaves);
+}
+
+void WorkbenchController::refresh()
+{
+    if (m_shuttingDown)
+        return;
+    refreshDeviceAdapterProviders();
+    refreshProjects();
+    refreshDevices();
+    refreshControllerConnectionPresentation();
+}
+
+void WorkbenchController::shutdown()
+{
+    if (m_shuttingDown)
+        return;
+    m_shuttingDown = true;
+    for (const QMetaObject::Connection &connection : std::as_const(m_connections))
+        disconnect(connection);
+    m_connections.clear();
+    m_controllerAutoAcquireStates.clear();
+    m_controllerStartupStates.clear();
+    m_controllerStopStates.clear();
+    m_controllerCleanupStates.clear();
+    m_controllerOutputFingerprints.clear();
+    m_topologyCapabilityFingerprints.clear();
+    m_runtimePackageActivationPreparation.reset();
+    m_reportedRuntimePackageActivationRevisions.clear();
+    m_treeModel.setDeviceDropHandler({});
+    m_treeModel.clear();
+}
+
+void WorkbenchController::refreshProjects()
+{
+    if (m_shuttingDown || !m_projectService)
+        return;
+    const Data::NodeId selectedId = m_selectionService ? m_selectionService->currentNodeId()
+                                                       : Data::NodeId();
+    m_treeModel.setProjects(m_projectService->projects());
+    m_treeModel.setActiveProjectId(m_projectService->activeProjectId());
+    const std::optional<ActiveMasterContext> active = activeMasterContext(m_projectService);
+    m_treeModel.setDropTargetMasterId(active ? active->masterId : Data::NodeId());
+    if (m_selectionService && !selectedId.isNull()
+        && m_treeModel.contextForNodeId(selectedId).nodeId.isNull()) {
+        m_selectionService->clear();
+    }
+    restoreScanProviderSelections();
+    refreshOptionalProviders();
+    refreshControllerConnectionPresentation();
+}
+
+void WorkbenchController::refreshDevices()
+{
+    if (m_shuttingDown || !m_deviceRepository)
+        return;
+    const Data::NodeId selectedId = m_selectionService ? m_selectionService->currentNodeId()
+                                                       : Data::NodeId();
+    m_treeModel.syncDevices(m_deviceRepository->devices());
+    if (m_selectionService && !selectedId.isNull()
+        && m_treeModel.contextForNodeId(selectedId).nodeId.isNull()) {
+        m_selectionService->clear();
+    }
+    m_topologyCapabilityFingerprints.clear();
+    handleControllerConnectionChanged();
+}
+
+void WorkbenchController::refreshDeviceAdapterProviders()
+{
+    refreshDeviceAdapterProvidersExcluding(nullptr);
+}
+
+void WorkbenchController::refreshDeviceAdapterProvidersExcluding(Core::Provider *excludedProvider)
+{
+    if (m_shuttingDown || !m_providerRegistry)
+        return;
+    QList<Core::DeviceAdapterProvider *> providers;
+    for (Core::Provider *provider :
+         m_providerRegistry->providers(Core::ProviderKind::DeviceAdapter)) {
+        if (provider == excludedProvider)
+            continue;
+        if (auto adapter = qobject_cast<Core::DeviceAdapterProvider *>(provider);
+            adapter && adapter->isAvailable()) {
+            providers.append(adapter);
+        }
+    }
+    m_treeModel.setDeviceAdapterProviders(providers);
+}
+
+void WorkbenchController::watchDeviceAdapterProvider(Core::Provider *provider)
+{
+    auto adapter = qobject_cast<Core::DeviceAdapterProvider *>(provider);
+    if (!adapter)
+        return;
+    for (const QMetaObject::Connection &connection :
+         {connect(
+              adapter,
+              &Core::Provider::availabilityChanged,
+              this,
+              &WorkbenchController::refreshDeviceAdapterProviders,
+              Qt::UniqueConnection),
+          connect(
+              adapter,
+              &Core::DeviceAdapterProvider::adapterManifestsChanged,
+              &m_treeModel,
+              &WorkbenchTreeModel::invalidateDeviceAdapterProviders,
+              Qt::UniqueConnection)}) {
+        if (connection)
+            m_connections.append(connection);
+    }
+}
+
+void WorkbenchController::watchOptionalProvider(Core::Provider *provider)
+{
+    if (!provider
+        || (provider->kind() != Core::ProviderKind::Scan
+            && provider->kind() != Core::ProviderKind::Diagnostics)) {
+        return;
+    }
+    const QMetaObject::Connection connection = connect(
+        provider,
+        &Core::Provider::availabilityChanged,
+        this,
+        &WorkbenchController::handleOptionalAvailabilityChanged,
+        Qt::UniqueConnection);
+    if (connection)
+        m_connections.append(connection);
+    const QMetaObject::Connection displayNameConnection = connect(
+        provider,
+        &Core::Provider::displayNameChanged,
+        this,
+        &WorkbenchController::handleOptionalAvailabilityChanged,
+        Qt::UniqueConnection);
+    if (displayNameConnection)
+        m_connections.append(displayNameConnection);
+
+    if (auto scan = qobject_cast<Core::ScanProvider *>(provider)) {
+        for (const QMetaObject::Connection &scanConnection :
+             {connect(
+                  scan,
+                  &Core::ScanProvider::scanStateChanged,
+                  this,
+                  &WorkbenchController::handleOptionalAvailabilityChanged,
+                  Qt::UniqueConnection),
+              connect(
+                  scan,
+                  &Core::ScanProvider::scanProgressChanged,
+                  this,
+                  &WorkbenchController::handleOptionalAvailabilityChanged,
+                  Qt::UniqueConnection),
+              connect(
+                  scan,
+                  &Core::ScanProvider::scanResultChanged,
+                  this,
+                  &WorkbenchController::handleOptionalAvailabilityChanged,
+                  Qt::UniqueConnection)}) {
+            if (scanConnection)
+                m_connections.append(scanConnection);
+        }
+    }
+    if (auto diagnostics = qobject_cast<Core::DiagnosticsProvider *>(provider)) {
+        for (const QMetaObject::Connection &diagnosticsConnection :
+             {connect(
+                  diagnostics,
+                  &Core::DiagnosticsProvider::streamStateChanged,
+                  this,
+                  &WorkbenchController::handleOptionalAvailabilityChanged,
+                  Qt::UniqueConnection),
+              connect(
+                  diagnostics,
+                  &Core::DiagnosticsProvider::diagnosticsSnapshotChanged,
+                  this,
+                  &WorkbenchController::handleOptionalAvailabilityChanged,
+                  Qt::UniqueConnection)}) {
+            if (diagnosticsConnection)
+                m_connections.append(diagnosticsConnection);
+        }
+    }
+}
+
+void WorkbenchController::watchControllerConnectionProvider(Core::Provider *provider)
+{
+    auto connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(provider);
+    if (!connectionProvider)
+        return;
+    ++m_nextControllerConnectionProviderEpoch;
+    if (!m_nextControllerConnectionProviderEpoch)
+        ++m_nextControllerConnectionProviderEpoch;
+    m_controllerConnectionProviderEpochs
+        .insert(connectionProvider, m_nextControllerConnectionProviderEpoch);
+    m_controllerAutoAcquireStates.remove(connectionProvider);
+    m_controllerStartupStates.remove(connectionProvider);
+    m_controllerStopStates.remove(connectionProvider);
+    m_controllerCleanupStates.remove(connectionProvider);
+    m_topologyCapabilityFingerprints.remove(connectionProvider);
+    for (const QMetaObject::Connection &connection :
+         {connect(
+              connectionProvider,
+              &Core::Provider::availabilityChanged,
+              this,
+              &WorkbenchController::handleControllerConnectionChanged,
+              Qt::UniqueConnection),
+          connect(
+              connectionProvider,
+              &Core::Provider::displayNameChanged,
+              this,
+              &WorkbenchController::handleControllerConnectionChanged,
+              Qt::UniqueConnection),
+          connect(
+              connectionProvider,
+              &Core::ControllerConnectionProvider::connectionProfilesChanged,
+              this,
+              &WorkbenchController::handleControllerConnectionChanged,
+              Qt::UniqueConnection),
+          connect(
+              connectionProvider,
+              &Core::ControllerConnectionProvider::connectionSnapshotChanged,
+              this,
+              &WorkbenchController::handleControllerConnectionChanged,
+              Qt::UniqueConnection)}) {
+        if (connection)
+            m_connections.append(connection);
+    }
+}
+
+void WorkbenchController::restoreScanProviderSelections()
+{
+    if (m_shuttingDown || m_suppressScanProviderPreferenceRestore
+        || !m_projectService || !m_scanProviderSelectionService) {
+        return;
+    }
+
+    const std::optional<QList<ScanProviderPreference>> preferences = scanProviderPreferences();
+    if (!preferences)
+        return;
+
+    const QScopedValueRollback suppressRestore(
+        m_suppressScanProviderPreferenceRestore, true);
+    for (const ScanProviderPreference &preference : *preferences) {
+        if (!controllerConnectionScopeIsValid(preference.scope)
+            || m_scanProviderSelectionService->selection(preference.scope)) {
+            continue;
+        }
+        m_scanProviderSelectionService->select(preference.scope, preference.providerId);
+    }
+}
+
+void WorkbenchController::refreshOptionalProviders(Core::Provider *excluding)
+{
+    if (m_shuttingDown || !m_providerRegistry)
+        return;
+
+    Core::DiagnosticsProvider *diagnosticsObject = preferredDiagnosticsProvider(
+        m_providerRegistry, excluding);
+    const OptionalProviderPresentation diagnostics = optionalProviderPresentation(
+        diagnosticsObject, Core::ProviderKind::Diagnostics);
+
+    QList<ScopedScanProviderPresentation> scanProviders;
+    if (m_scanProviderSelectionService) {
+        for (const Core::ScanProviderSelection &selection :
+             m_scanProviderSelectionService->selections()) {
+            if (!controllerConnectionScopeIsValid(selection.scope))
+                continue;
+            ScopedScanProviderPresentation presentation;
+            presentation.scope = selection.scope;
+            presentation.provider = scanProviderPresentation(selection.scope);
+            const Core::TopologyLookupResult topology = selectedMockTopology(selection.scope);
+            if (topology.hasFreshProviderEvidence() && topology.snapshot
+                && topology.snapshot->mockEvidence) {
+                presentation.result = topology.snapshot->mockEvidence;
+            }
+            scanProviders.append(presentation);
+        }
+    }
+
+    Data::DiagnosticsStreamState diagnosticsState = Data::DiagnosticsStreamState::Stopped;
+    Data::DiagnosticsRequest diagnosticsRequest;
+    std::optional<Data::DiagnosticsSnapshot> diagnosticsSnapshot;
+    if (diagnostics.isAvailable()) {
+        const auto diagnosticsProvider = qobject_cast<Core::DiagnosticsProvider *>(
+            diagnosticsObject);
+        QTC_ASSERT(diagnosticsProvider, return);
+        diagnosticsState = diagnosticsProvider->streamState();
+        diagnosticsRequest = diagnosticsProvider->activeRequest();
+        diagnosticsSnapshot = diagnosticsProvider->latestSnapshot();
+    }
+
+    DiagnosticsStatusPresentation diagnosticsStatus;
+    diagnosticsStatus.provider = diagnostics;
+    diagnosticsStatus.streamState = diagnosticsState;
+    diagnosticsStatus.request = diagnosticsRequest;
+    if (diagnosticsSnapshot) {
+        diagnosticsStatus.request = {
+            diagnosticsSnapshot->projectId,
+            diagnosticsSnapshot->masterId,
+        };
+        diagnosticsStatus.runMode = diagnosticsSnapshot->runMode;
+        diagnosticsStatus.masterState = diagnosticsSnapshot->masterState;
+        diagnosticsStatus.mock = diagnosticsSnapshot->mock;
+        diagnosticsStatus.masterHasError = diagnosticsSnapshot->masterHasError;
+        diagnosticsStatus.activeAlarmCount = diagnosticsSnapshot->activeAlarmCount;
+    }
+
+    const bool diagnosticsChanged = m_diagnosticsProvider != diagnostics;
+    const bool diagnosticsAvailabilityChanged
+        = m_diagnosticsProvider.isAvailable() != diagnostics.isAvailable();
+    const bool statusPresentationChanged = m_diagnosticsStatus != diagnosticsStatus;
+    m_diagnosticsProvider = diagnostics;
+    m_diagnosticsStatus = diagnosticsStatus;
+    m_treeModel.setProviderPresentations(
+        scanProviders,
+        m_diagnosticsProvider,
+        diagnosticsState,
+        diagnosticsRequest,
+        diagnosticsSnapshot);
+    emit scanProviderChanged();
+    if (diagnosticsChanged)
+        emit diagnosticsProviderChanged(diagnosticsAvailabilityChanged);
+    if (statusPresentationChanged)
+        emit diagnosticsStatusChanged();
+}
+
+void WorkbenchController::handleOptionalAvailabilityChanged()
+{
+    restoreScanProviderSelections();
+    refreshOptionalProviders();
+}
+
+void WorkbenchController::refreshControllerConnectionPresentation()
+{
+    QList<Data::ControllerConnectionSnapshot> snapshots;
+    for (const ControllerConnectionSelection &selection : m_controllerConnectionSelections) {
+        if (!selection.providerExplicitlySelected || !selection.providerId.isValid()
+            || !selection.profileExplicitlySelected || selection.profileId.isNull()
+            || !controllerConnectionScopeIsValid(selection.scope)) {
+            continue;
+        }
+        Core::ControllerConnectionProvider *provider = controllerConnectionProvider(
+            selection.scope);
+        if (!provider || provider->id() != selection.providerId
+            || !m_controllerConnectionProviderEpochs.contains(provider)) {
+            continue;
+        }
+        const Data::ControllerConnectionSnapshot snapshot
+            = projectedControllerConnectionSnapshot(provider, selection.scope);
+        if (snapshot.scope == selection.scope && snapshot.profileId == selection.profileId)
+            snapshots.append(snapshot);
+    }
+    m_treeModel.setControllerConnections(snapshots);
+}
+
+void WorkbenchController::writeControllerTopologyCapabilityOutput(
+    Core::ControllerConnectionProvider *provider, const Data::ControllerConnectionSnapshot &snapshot)
+{
+    if (!provider
+        || (snapshot.state != Data::ControllerConnectionState::Connected
+            && snapshot.state != Data::ControllerConnectionState::Degraded)
+        || !snapshot.topology || snapshot.topology->result || snapshot.topology->slaves.isEmpty()) {
+        m_topologyCapabilityFingerprints.remove(provider);
+        return;
+    }
+
+    const FreeRunCompatibilityReport report
+        = freeRunCompatibilityReport(*snapshot.topology, m_deviceRepository);
+    const QString fingerprint = QStringLiteral("%1|%2|%3|%4")
+                                    .arg(report.compatibleDevices)
+                                    .arg(report.incompatibleDevices.join(QLatin1Char('|')))
+                                    .arg(report.unknownDevices.join(QLatin1Char('|')))
+                                    .arg(snapshot.topology->discoveredAt.toMSecsSinceEpoch());
+    if (m_topologyCapabilityFingerprints.value(provider) == fingerprint)
+        return;
+    m_topologyCapabilityFingerprints.insert(provider, fingerprint);
+
+    QStringList warnings;
+    if (!report.incompatibleDevices.isEmpty()) {
+        warnings.append(
+            Tr::tr("FreeRun unavailable: %1")
+                .arg(report.incompatibleDevices.join(Tr::tr("; "))));
+    }
+    if (!report.unknownDevices.isEmpty()) {
+        warnings.append(
+            Tr::tr("FreeRun unverified: %1")
+                .arg(report.unknownDevices.join(Tr::tr("; "))));
+    }
+    if (warnings.isEmpty()) {
+        writeControllerOutput(
+            Tr::tr("FreeRun available · %n device(s)", nullptr, report.compatibleDevices));
+        return;
+    }
+
+    warnings.append(
+        report.incompatibleDevices.isEmpty()
+            ? Tr::tr("Import matching ESI XML.")
+            : Tr::tr("Use Distributed Clocks."));
+    writeControllerOutput(
+        warnings.join(QLatin1Char(' ')),
+        ControllerOutputLevel::Warning);
+}
+
+void WorkbenchController::handleProjectAboutToBeRemoved(const Data::NodeId &projectId)
+{
+    if (m_shuttingDown || projectId.isNull())
+        return;
+
+    if (m_selectionService) {
+        const Core::PropertyPageContext selected
+            = m_treeModel.contextForNodeId(m_selectionService->currentNodeId());
+        if (selected.projectId == projectId)
+            m_selectionService->clear();
+    }
+    if (m_runtimePackageActivationPreparation
+        && m_runtimePackageActivationPreparation->scope.projectId
+               == projectId) {
+        m_runtimePackageActivationPreparation.reset();
+        emit trustedRuntimePackageActivationChanged();
+    }
+
+    const QScopedValueRollback suppressChanges(m_suppressControllerConnectionChanges, true);
+    bool changed = false;
+    for (Core::ControllerConnectionProvider *provider : controllerConnectionProviders()) {
+        const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+        if (snapshot.scope.projectId != projectId
+            || snapshot.state == Data::ControllerConnectionState::Disconnected) {
+            continue;
+        }
+        changed = true;
+        if (m_controllerStartupStates.remove(provider)) {
+            writeControllerOutput(
+                Tr::tr("Start canceled: project closed."),
+                ControllerOutputLevel::Warning);
+        }
+        if (m_controllerStopStates.remove(provider)) {
+            writeControllerOutput(
+                Tr::tr("Stop canceled: project closed."),
+                ControllerOutputLevel::Warning);
+        }
+        beginControllerCleanup(provider, snapshot);
+    }
+    changed = m_controllerConnectionSelections.removeIf(
+                  [this, &projectId](const ControllerConnectionSelection &selection) {
+                      return selection.scope.projectId == projectId
+                             && !controllerCleanupBindingIsRetained(selection.scope);
+                  })
+                  > 0
+              || changed;
+    if (changed)
+        emit controllerConnectionChanged();
+}
+
+void WorkbenchController::handleControllerConnectionChanged()
+{
+    if (m_shuttingDown)
+        return;
+    const QList<Core::ControllerConnectionProvider *> cleanupProviders
+        = m_controllerCleanupStates.keys();
+    for (Core::ControllerConnectionProvider *provider : cleanupProviders)
+        scheduleControllerCleanup(provider);
+    const QList<Core::ControllerConnectionProvider *> startupProviders
+        = m_controllerStartupStates.keys();
+    for (Core::ControllerConnectionProvider *provider : startupProviders)
+        scheduleControllerStartup(provider);
+    const QList<Core::ControllerConnectionProvider *> stopProviders = m_controllerStopStates.keys();
+    for (Core::ControllerConnectionProvider *provider : stopProviders)
+        scheduleControllerStop(provider);
+    if (m_suppressControllerConnectionChanges)
+        return;
+
+    refreshControllerConnectionPresentation();
+    for (Core::ControllerConnectionProvider *provider : controllerConnectionProviders()) {
+        if (!provider)
+            continue;
+        const Data::ControllerConnectionSnapshot rawSnapshot = provider->connectionSnapshot();
+        const Data::ControllerConnectionSnapshot snapshot
+            = projectedControllerConnectionSnapshot(provider, rawSnapshot.scope);
+        writeControllerTopologyCapabilityOutput(provider, snapshot);
+        const ControllerOutputLevel level = controllerOutputLevel(snapshot);
+        const QString message = controllerOutputMessage(snapshot);
+        const QString fingerprint = controllerOutputFingerprint(message, level);
+        auto previous = m_controllerOutputFingerprints.find(provider);
+        if (previous == m_controllerOutputFingerprints.end()) {
+            m_controllerOutputFingerprints.insert(provider, fingerprint);
+            if (snapshot.state == Data::ControllerConnectionState::Disconnected
+                && snapshot.controlProgress.state == Data::ControllerControlState::Idle
+                && !snapshot.lastError && !snapshot.topology) {
+                continue;
+            }
+        } else {
+            if (*previous == fingerprint)
+                continue;
+            *previous = fingerprint;
+        }
+        writeControllerOutput(message, level);
+    }
+    emit controllerConnectionChanged();
+}
+
+void WorkbenchController::scheduleControllerAutoAcquire()
+{
+    if (m_shuttingDown || m_suppressControllerConnectionChanges)
+        return;
+
+    for (Core::ControllerConnectionProvider *provider : controllerConnectionProviders()) {
+        if (!provider)
+            continue;
+        const quint64 providerEpoch = m_controllerConnectionProviderEpochs.value(provider);
+        if (!providerEpoch)
+            continue;
+
+        const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+        const Data::ControllerConnectionScope scope = snapshot.scope;
+        if (!controllerConnectionScopeIsValid(scope))
+            continue;
+        const ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+        if (!selection.providerExplicitlySelected || selection.providerId != provider->id()
+            || controllerConnectionProvider(scope) != provider
+            || !selection.profileExplicitlySelected || selection.profileId.isNull()
+            || snapshot.profileId != selection.profileId || !snapshot.sessionGeneration
+            || !snapshot.session || !snapshot.session->sessionId || !snapshot.session->bootId) {
+            continue;
+        }
+
+        ControllerAutoAcquireState &state = m_controllerAutoAcquireStates[provider];
+        if (state.providerEpoch != providerEpoch || state.scope != scope
+            || state.profileId != selection.profileId
+            || state.sessionGeneration != snapshot.sessionGeneration) {
+            state = {
+                providerEpoch,
+                scope,
+                selection.profileId,
+                snapshot.sessionGeneration,
+                false,
+                false,
+            };
+        }
+
+        if (snapshot.session->ownsControlLease)
+            continue;
+
+        if (state.acquireQueued || state.acquireAttempted
+            || !canExecuteControllerControl(
+                scope, Data::ControllerControlCommand::AcquireControl)) {
+            continue;
+        }
+
+        state.acquireQueued = true;
+        const QPointer<Core::ControllerConnectionProvider> guardedProvider(provider);
+        const Data::NodeId expectedProfileId = selection.profileId;
+        const quint64 expectedGeneration = snapshot.sessionGeneration;
+        QMetaObject::invokeMethod(
+            this,
+            [this,
+             guardedProvider,
+             scope,
+             expectedProfileId,
+             expectedGeneration,
+             providerEpoch] {
+                executeControllerAutoAcquire(
+                    guardedProvider,
+                    scope,
+                    expectedProfileId,
+                    expectedGeneration,
+                    providerEpoch);
+            },
+            Qt::QueuedConnection);
+    }
+}
+
+void WorkbenchController::executeControllerAutoAcquire(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionScope &expectedScope,
+    const Data::NodeId &expectedProfileId,
+    quint64 expectedGeneration,
+    quint64 expectedProviderEpoch)
+{
+    if (m_shuttingDown || !provider
+        || m_controllerConnectionProviderEpochs.value(provider) != expectedProviderEpoch) {
+        return;
+    }
+
+    auto state = m_controllerAutoAcquireStates.find(provider);
+    if (state == m_controllerAutoAcquireStates.end() || !state->acquireQueued
+        || state->acquireAttempted
+        || state->providerEpoch != expectedProviderEpoch || state->scope != expectedScope
+        || state->profileId != expectedProfileId
+        || state->sessionGeneration != expectedGeneration) {
+        return;
+    }
+    state->acquireQueued = false;
+
+    if (!controllerConnectionScopeIsValid(expectedScope)
+        || controllerConnectionProvider(expectedScope) != provider) {
+        return;
+    }
+    const ControllerConnectionSelection selection = controllerConnectionSelection(expectedScope);
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (!selection.providerExplicitlySelected || selection.providerId != provider->id()
+        || !selection.profileExplicitlySelected || selection.profileId != expectedProfileId
+        || snapshot.scope != expectedScope || snapshot.profileId != expectedProfileId
+        || snapshot.sessionGeneration != expectedGeneration || !snapshot.session
+        || !snapshot.session->sessionId || !snapshot.session->bootId
+        || !canExecuteControllerControl(
+            expectedScope, Data::ControllerControlCommand::AcquireControl)) {
+        return;
+    }
+
+    state->acquireAttempted = true;
+    Data::ControllerControlRequest request;
+    request.command = Data::ControllerControlCommand::AcquireControl;
+    const Utils::Result<> result = executeControllerControl(expectedScope, request);
+    if (!result) {
+        writeControllerOutput(
+            Tr::tr("Control acquisition failed: %1").arg(result.error()),
+            ControllerOutputLevel::Error);
+        return;
+    }
+}
+
+QString WorkbenchController::controllerStartupUnavailableReason(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionSnapshot &snapshot,
+    Data::ControllerControlCommand startCommand) const
+{
+    if (!provider)
+        return Tr::tr("The selected controller adapter is unavailable.");
+    if (m_controllerStartupStates.contains(provider))
+        return Tr::tr("Automatic controller startup is in progress.");
+    if (m_controllerStopStates.contains(provider))
+        return Tr::tr("Controller stop verification is in progress.");
+
+    using Command = Data::ControllerControlCommand;
+    if (startCommand != Command::StartFreeRun
+        && startCommand != Command::StartDistributedClocks) {
+        return Tr::tr("Select an explicit controller start mode before running.");
+    }
+    for (const Command command : {Command::RestoreActivePackage, startCommand}) {
+        if (!provider->supportsControlCommand(command)) {
+            return Tr::tr(
+                "The controller does not support the fast restart sequence.");
+        }
+    }
+
+    if (const QString reason
+        = controllerControlStateUnavailableReason(snapshot, Command::RestoreActivePackage);
+        !reason.isEmpty()) {
+        return reason;
+    }
+    if (!snapshot.package || snapshot.package->activeSlot == Data::ControllerSlot::None
+        || !snapshot.package->activeGeneration || !snapshot.package->activeConfigurationId) {
+        return Tr::tr("No restorable active controller package is available.");
+    }
+    return {};
+}
+
+Utils::Result<> WorkbenchController::beginControllerStartup(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionSnapshot &snapshot,
+    Data::ControllerControlCommand startCommand)
+{
+    const QString unavailableReason
+        = controllerStartupUnavailableReason(provider, snapshot, startCommand);
+    if (!unavailableReason.isEmpty())
+        return Utils::ResultError(unavailableReason);
+    QTC_ASSERT(
+        provider,
+        return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable.")));
+    if (!snapshot.session || !snapshot.session->sessionId || !snapshot.session->bootId
+        || !snapshot.sessionGeneration) {
+        return Utils::ResultError(Tr::tr("The controller session identity is incomplete."));
+    }
+    const quint64 providerEpoch = m_controllerConnectionProviderEpochs.value(provider);
+    if (!providerEpoch)
+        return Utils::ResultError(Tr::tr("The controller adapter instance is unavailable."));
+
+    ControllerStartupState state;
+    state.providerEpoch = providerEpoch;
+    state.scope = snapshot.scope;
+    state.profileId = snapshot.profileId;
+    state.sessionGeneration = snapshot.sessionGeneration;
+    state.sessionId = snapshot.session->sessionId;
+    state.bootId = snapshot.session->bootId;
+    state.startCommand = startCommand;
+    state.phase = ControllerStartupPhase::WaitingForRestore;
+    state.remainingPolls = controllerStartupMaximumPhasePolls;
+    m_controllerStartupStates.insert(provider, state);
+
+    writeControllerOutput(Tr::tr("Starting · Restore → Run"));
+
+    Data::ControllerControlRequest request;
+    request.command = Data::ControllerControlCommand::RestoreActivePackage;
+    const Utils::Result<> result = provider->executeControlCommand(request);
+    if (!result) {
+        m_controllerStartupStates.remove(provider);
+        return result;
+    }
+    scheduleControllerStartup(provider, controllerStartupPollIntervalMs);
+    emit controllerConnectionChanged();
+    return {};
+}
+
+void WorkbenchController::scheduleControllerStartup(
+    Core::ControllerConnectionProvider *provider, int delayMs)
+{
+    if (m_shuttingDown || !provider)
+        return;
+    auto state = m_controllerStartupStates.find(provider);
+    if (state == m_controllerStartupStates.end() || state->scheduled)
+        return;
+
+    state->scheduled = true;
+    const QPointer<Core::ControllerConnectionProvider> guardedProvider(provider);
+    const Data::ControllerConnectionScope expectedScope = state->scope;
+    const Data::NodeId expectedProfileId = state->profileId;
+    const quint64 expectedGeneration = state->sessionGeneration;
+    const quint64 expectedProviderEpoch = state->providerEpoch;
+    QTimer::singleShot(
+        qMax(0, delayMs),
+        this,
+        [this,
+         guardedProvider,
+         expectedScope,
+         expectedProfileId,
+         expectedGeneration,
+         expectedProviderEpoch] {
+            advanceControllerStartup(
+                guardedProvider,
+                expectedScope,
+                expectedProfileId,
+                expectedGeneration,
+                expectedProviderEpoch);
+        });
+}
+
+void WorkbenchController::advanceControllerStartup(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionScope &expectedScope,
+    const Data::NodeId &expectedProfileId,
+    quint64 expectedGeneration,
+    quint64 expectedProviderEpoch)
+{
+    if (m_shuttingDown || !provider)
+        return;
+    auto state = m_controllerStartupStates.find(provider);
+    if (state == m_controllerStartupStates.end() || state->scope != expectedScope
+        || state->profileId != expectedProfileId || state->sessionGeneration != expectedGeneration
+        || state->providerEpoch != expectedProviderEpoch) {
+        return;
+    }
+    state->scheduled = false;
+
+    if (m_controllerConnectionProviderEpochs.value(provider) != expectedProviderEpoch) {
+        failControllerStartup(
+            provider, Tr::tr("The controller adapter instance changed during startup."));
+        return;
+    }
+
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (!controllerConnectionScopeIsValid(expectedScope) || snapshot.scope != expectedScope
+        || snapshot.profileId != expectedProfileId
+        || snapshot.sessionGeneration != expectedGeneration || !snapshot.session
+        || snapshot.session->sessionId != state->sessionId
+        || snapshot.session->bootId != state->bootId) {
+        failControllerStartup(
+            provider, Tr::tr("The controller session changed during automatic startup."));
+        return;
+    }
+    if (snapshot.state != Data::ControllerConnectionState::Connected
+        && snapshot.state != Data::ControllerConnectionState::Degraded) {
+        failControllerStartup(
+            provider, Tr::tr("The controller disconnected during automatic startup."));
+        return;
+    }
+    if (snapshot.mock || snapshot.readOnly || !snapshot.session->ownsControlLease
+        || snapshot.session->controlLeaseOwnerSessionId != snapshot.session->sessionId) {
+        failControllerStartup(
+            provider, Tr::tr("Exclusive controller control was lost during automatic startup."));
+        return;
+    }
+    if (state->remainingPolls <= 0) {
+        failControllerStartup(
+            provider, Tr::tr("Timed out while waiting for automatic controller startup."));
+        return;
+    }
+    --state->remainingPolls;
+
+    using Command = Data::ControllerControlCommand;
+    const Command expectedCommand = [&state] {
+        switch (state->phase) {
+        case ControllerStartupPhase::WaitingForRestore:
+            return Command::RestoreActivePackage;
+        case ControllerStartupPhase::WaitingForRunning:
+            return state->startCommand;
+        }
+        return Command::None;
+    }();
+    const Data::ControllerControlProgress &progress = snapshot.controlProgress;
+    if (progress.state == Data::ControllerControlState::Pending) {
+        if (progress.command != expectedCommand) {
+            failControllerStartup(
+                provider, Tr::tr("A different controller operation replaced automatic startup."));
+            return;
+        }
+        scheduleControllerStartup(provider, controllerStartupPollIntervalMs);
+        return;
+    }
+    if (progress.command == expectedCommand
+        && progress.state == Data::ControllerControlState::Failed) {
+        failControllerStartup(
+            provider,
+            progress.detail.isEmpty() ? Tr::tr("A controller startup step failed.")
+                                      : progress.detail);
+        return;
+    }
+
+    const bool expectedCommandSucceeded = progress.command == expectedCommand
+                                          && progress.state
+                                                 == Data::ControllerControlState::Succeeded;
+    const auto waitForSnapshot = [this, provider, &state] {
+        if (state->refreshCooldown <= 0) {
+            state->refreshCooldown = 5;
+            provider->refreshController();
+        } else {
+            --state->refreshCooldown;
+        }
+        scheduleControllerStartup(provider, controllerStartupPollIntervalMs);
+    };
+    const auto dispatch = [this,
+                           provider,
+                           &state,
+                           &snapshot](Command command, ControllerStartupPhase nextPhase) {
+        if (!provider->supportsControlCommand(command)) {
+            failControllerStartup(
+                provider,
+                Tr::tr("The controller does not support the fast restart sequence."));
+            return;
+        }
+        if (const QString reason = controllerControlStateUnavailableReason(snapshot, command);
+            !reason.isEmpty()) {
+            failControllerStartup(provider, reason);
+            return;
+        }
+        state->phase = nextPhase;
+        state->remainingPolls = controllerStartupMaximumPhasePolls;
+        state->refreshCooldown = 0;
+        Data::ControllerControlRequest request;
+        request.command = command;
+        const Utils::Result<> result = provider->executeControlCommand(request);
+        if (!result) {
+            failControllerStartup(provider, result.error());
+            return;
+        }
+        scheduleControllerStartup(provider, controllerStartupPollIntervalMs);
+    };
+
+    if (!expectedCommandSucceeded) {
+        waitForSnapshot();
+        return;
+    }
+
+    const std::optional<Data::ControllerStateSummary> &controllerState = snapshot.controllerState;
+    switch (state->phase) {
+    case ControllerStartupPhase::WaitingForRestore:
+        if (!controllerState
+            || controllerState->serviceState != Data::ControllerServiceState::OperationalSafe
+            || !controllerPackageIsActive(snapshot)) {
+            waitForSnapshot();
+            return;
+        }
+        dispatch(state->startCommand, ControllerStartupPhase::WaitingForRunning);
+        return;
+    case ControllerStartupPhase::WaitingForRunning:
+        if (!controllerState || !controllerState->ready
+            || controllerState->serviceState != Data::ControllerServiceState::Running
+            || !controllerState->applicationActive || !controllerState->busOperational
+            || !(controllerState->ethercatAlStateBits & 0x08) || !controllerState->cycleCount
+            || !controllerState->expectedWorkingCounter
+            || controllerState->actualWorkingCounter != controllerState->expectedWorkingCounter
+            || controllerState->currentFaults || controllerState->latchedFaults) {
+            waitForSnapshot();
+            return;
+        }
+        finishControllerStartup(provider);
+        return;
+    }
+}
+
+void WorkbenchController::finishControllerStartup(Core::ControllerConnectionProvider *provider)
+{
+    if (!provider || !m_controllerStartupStates.remove(provider))
+        return;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.controllerState) {
+        writeControllerOutput(
+            Tr::tr("Running · WKC %1/%2 · cycle %3")
+                .arg(snapshot.controllerState->actualWorkingCounter)
+                .arg(snapshot.controllerState->expectedWorkingCounter)
+                .arg(snapshot.controllerState->cycleCount));
+    } else {
+        writeControllerOutput(Tr::tr("Running"));
+    }
+    emit controllerConnectionChanged();
+}
+
+void WorkbenchController::failControllerStartup(
+    Core::ControllerConnectionProvider *provider, const QString &reason)
+{
+    if (!provider || !m_controllerStartupStates.remove(provider))
+        return;
+    writeControllerOutput(
+        Tr::tr("Start failed: %1").arg(reason), ControllerOutputLevel::Error);
+    emit controllerConnectionChanged();
+}
+
+QString WorkbenchController::controllerStopUnavailableReason(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionSnapshot &snapshot) const
+{
+    if (!provider)
+        return Tr::tr("The selected controller adapter is unavailable.");
+    if (m_controllerStopStates.contains(provider))
+        return Tr::tr("Controller stop verification is in progress.");
+    if (m_controllerStartupStates.contains(provider))
+        return Tr::tr("Automatic controller startup is in progress.");
+    if (!snapshot.controllerState)
+        return Tr::tr("The controller state is unavailable.");
+    if (!snapshot.session || !snapshot.session->sessionId || !snapshot.session->bootId
+        || !snapshot.sessionGeneration) {
+        return Tr::tr("The controller session identity is incomplete.");
+    }
+
+    using Command = Data::ControllerControlCommand;
+    using ServiceState = Data::ControllerServiceState;
+    Command firstCommand = Command::None;
+    switch (snapshot.controllerState->serviceState) {
+    case ServiceState::Running:
+    case ServiceState::Paused:
+        firstCommand = Command::ControlledStop;
+        if (!provider->supportsControlCommand(Command::EnterConfigurationMode)) {
+            return Tr::tr(
+                "The controller does not support entering configuration after a controlled stop.");
+        }
+        break;
+    case ServiceState::OperationalSafe:
+        firstCommand = Command::EnterConfigurationMode;
+        break;
+    default:
+        return Tr::tr("Stop is available only while the controller is Running, Paused, or OP_SAFE.");
+    }
+    if (!provider->supportsControlCommand(firstCommand))
+        return Tr::tr("The controller does not support the complete stop sequence.");
+    return controllerControlStateUnavailableReason(snapshot, firstCommand);
+}
+
+Utils::Result<> WorkbenchController::beginControllerStop(
+    Core::ControllerConnectionProvider *provider, const Data::ControllerConnectionSnapshot &snapshot)
+{
+    const QString unavailableReason = controllerStopUnavailableReason(provider, snapshot);
+    if (!unavailableReason.isEmpty())
+        return Utils::ResultError(unavailableReason);
+    QTC_ASSERT(
+        provider,
+        return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable.")));
+    QTC_ASSERT(
+        snapshot.controllerState && snapshot.session,
+        return Utils::ResultError(Tr::tr("The controller state is unavailable.")));
+    const quint64 providerEpoch = m_controllerConnectionProviderEpochs.value(provider);
+    if (!providerEpoch)
+        return Utils::ResultError(Tr::tr("The controller adapter instance is unavailable."));
+
+    using Command = Data::ControllerControlCommand;
+    const bool requiresControlledStop = snapshot.controllerState->serviceState
+                                        != Data::ControllerServiceState::OperationalSafe;
+    const Command firstCommand = requiresControlledStop ? Command::ControlledStop
+                                                        : Command::EnterConfigurationMode;
+
+    ControllerStopState state;
+    state.providerEpoch = providerEpoch;
+    state.scope = snapshot.scope;
+    state.profileId = snapshot.profileId;
+    state.sessionGeneration = snapshot.sessionGeneration;
+    state.sessionId = snapshot.session->sessionId;
+    state.bootId = snapshot.session->bootId;
+    state.phase = requiresControlledStop ? ControllerStopPhase::WaitingForControlledStop
+                                         : ControllerStopPhase::WaitingForConfiguration;
+    state.remainingPolls = controllerStopMaximumPhasePolls;
+    m_controllerStopStates.insert(provider, state);
+
+    writeControllerOutput(
+        requiresControlledStop
+            ? Tr::tr("Stopping · Controlled stop → Shutdown")
+            : Tr::tr("Stopping · Shutdown"));
+
+    Data::ControllerControlRequest request;
+    request.command = firstCommand;
+    const Utils::Result<> result = provider->executeControlCommand(request);
+    if (!result) {
+        m_controllerStopStates.remove(provider);
+        return result;
+    }
+    scheduleControllerStop(provider, controllerStopPollIntervalMs);
+    emit controllerConnectionChanged();
+    return {};
+}
+
+void WorkbenchController::scheduleControllerStop(
+    Core::ControllerConnectionProvider *provider, int delayMs)
+{
+    if (m_shuttingDown || !provider)
+        return;
+    auto state = m_controllerStopStates.find(provider);
+    if (state == m_controllerStopStates.end() || state->scheduled)
+        return;
+
+    state->scheduled = true;
+    const QPointer<Core::ControllerConnectionProvider> guardedProvider(provider);
+    const Data::ControllerConnectionScope expectedScope = state->scope;
+    const Data::NodeId expectedProfileId = state->profileId;
+    const quint64 expectedGeneration = state->sessionGeneration;
+    const quint64 expectedProviderEpoch = state->providerEpoch;
+    QTimer::singleShot(
+        qMax(0, delayMs),
+        this,
+        [this,
+         guardedProvider,
+         expectedScope,
+         expectedProfileId,
+         expectedGeneration,
+         expectedProviderEpoch] {
+            advanceControllerStop(
+                guardedProvider,
+                expectedScope,
+                expectedProfileId,
+                expectedGeneration,
+                expectedProviderEpoch);
+        });
+}
+
+void WorkbenchController::advanceControllerStop(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionScope &expectedScope,
+    const Data::NodeId &expectedProfileId,
+    quint64 expectedGeneration,
+    quint64 expectedProviderEpoch)
+{
+    if (m_shuttingDown || !provider)
+        return;
+    auto state = m_controllerStopStates.find(provider);
+    if (state == m_controllerStopStates.end() || state->scope != expectedScope
+        || state->profileId != expectedProfileId || state->sessionGeneration != expectedGeneration
+        || state->providerEpoch != expectedProviderEpoch) {
+        return;
+    }
+    state->scheduled = false;
+
+    if (m_controllerConnectionProviderEpochs.value(provider) != expectedProviderEpoch) {
+        failControllerStop(
+            provider, Tr::tr("The controller adapter instance changed during stop verification."));
+        return;
+    }
+
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (!controllerConnectionScopeIsValid(expectedScope) || snapshot.scope != expectedScope
+        || snapshot.profileId != expectedProfileId
+        || snapshot.sessionGeneration != expectedGeneration || !snapshot.session
+        || snapshot.session->sessionId != state->sessionId
+        || snapshot.session->bootId != state->bootId) {
+        failControllerStop(
+            provider, Tr::tr("The controller session changed during stop verification."));
+        return;
+    }
+    if (snapshot.state != Data::ControllerConnectionState::Connected
+        && snapshot.state != Data::ControllerConnectionState::Degraded) {
+        failControllerStop(provider, Tr::tr("The controller disconnected during stop verification."));
+        return;
+    }
+    if (snapshot.mock || snapshot.readOnly || !snapshot.session->ownsControlLease
+        || snapshot.session->controlLeaseOwnerSessionId != snapshot.session->sessionId) {
+        failControllerStop(
+            provider, Tr::tr("Exclusive controller control was lost during stop verification."));
+        return;
+    }
+    if (state->remainingPolls <= 0) {
+        failControllerStop(
+            provider, Tr::tr("Timed out before cyclic EtherCAT traffic was confirmed stopped."));
+        return;
+    }
+    --state->remainingPolls;
+
+    using Command = Data::ControllerControlCommand;
+    const Command expectedCommand = state->phase == ControllerStopPhase::WaitingForControlledStop
+                                        ? Command::ControlledStop
+                                        : Command::EnterConfigurationMode;
+    const Data::ControllerControlProgress &progress = snapshot.controlProgress;
+    if (progress.state == Data::ControllerControlState::Pending) {
+        if (progress.command != expectedCommand) {
+            failControllerStop(
+                provider, Tr::tr("A different controller operation replaced the stop sequence."));
+            return;
+        }
+        scheduleControllerStop(provider, controllerStopPollIntervalMs);
+        return;
+    }
+    if (progress.command == expectedCommand
+        && progress.state == Data::ControllerControlState::Failed) {
+        failControllerStop(
+            provider,
+            progress.detail.isEmpty() ? Tr::tr("A controller stop step failed.") : progress.detail);
+        return;
+    }
+
+    const bool expectedCommandSucceeded = progress.command == expectedCommand
+                                          && progress.state
+                                                 == Data::ControllerControlState::Succeeded;
+    const auto waitForSnapshot = [this, provider, &state] {
+        if (state->refreshCooldown <= 0) {
+            state->refreshCooldown = 5;
+            provider->refreshController();
+        } else {
+            --state->refreshCooldown;
+        }
+        scheduleControllerStop(provider, controllerStopPollIntervalMs);
+    };
+    if (!expectedCommandSucceeded) {
+        waitForSnapshot();
+        return;
+    }
+
+    const std::optional<Data::ControllerStateSummary> &controllerState = snapshot.controllerState;
+    if (state->phase == ControllerStopPhase::WaitingForControlledStop) {
+        if (!controllerState || controllerState->applicationActive
+            || (controllerState->serviceState != Data::ControllerServiceState::OperationalSafe
+                && controllerState->serviceState != Data::ControllerServiceState::Fault)) {
+            waitForSnapshot();
+            return;
+        }
+        if (!provider->supportsControlCommand(Command::EnterConfigurationMode)) {
+            failControllerStop(
+                provider,
+                Tr::tr(
+                    "The controller does not support entering configuration after a controlled "
+                    "stop."));
+            return;
+        }
+        if (const QString reason
+            = controllerControlStateUnavailableReason(snapshot, Command::EnterConfigurationMode);
+            !reason.isEmpty()) {
+            failControllerStop(provider, reason);
+            return;
+        }
+
+        state->phase = ControllerStopPhase::WaitingForConfiguration;
+        state->remainingPolls = controllerStopMaximumPhasePolls;
+        state->refreshCooldown = 0;
+        Data::ControllerControlRequest request;
+        request.command = Command::EnterConfigurationMode;
+        const Utils::Result<> result = provider->executeControlCommand(request);
+        if (!result) {
+            failControllerStop(provider, result.error());
+            return;
+        }
+        scheduleControllerStop(provider, controllerStopPollIntervalMs);
+        return;
+    }
+
+    const bool packageInactive = snapshot.package
+                                 && snapshot.package->controllerState
+                                        != Data::ControllerPackageState::Active;
+    if (!controllerState || controllerState->serviceState != Data::ControllerServiceState::Shutdown
+        || controllerState->applicationActive || controllerState->busOperational
+        || controllerState->ethercatAlStateBits || controllerState->actualWorkingCounter
+        || controllerState->expectedWorkingCounter || controllerState->distributedClocksLocked
+        || !packageInactive) {
+        waitForSnapshot();
+        return;
+    }
+    finishControllerStop(provider);
+}
+
+void WorkbenchController::finishControllerStop(Core::ControllerConnectionProvider *provider)
+{
+    if (!provider || !m_controllerStopStates.remove(provider))
+        return;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.controllerState
+        && (snapshot.controllerState->currentFaults || snapshot.controllerState->latchedFaults)) {
+        writeControllerOutput(
+            Tr::tr("Stopped · Shutdown · faults 0x%1/0x%2")
+                .arg(snapshot.controllerState->currentFaults, 0, 16)
+                .arg(snapshot.controllerState->latchedFaults, 0, 16),
+            ControllerOutputLevel::Warning);
+    } else {
+        writeControllerOutput(Tr::tr("Stopped · Shutdown · DC off"));
+    }
+    emit controllerConnectionChanged();
+}
+
+void WorkbenchController::failControllerStop(
+    Core::ControllerConnectionProvider *provider, const QString &reason)
+{
+    if (!provider || !m_controllerStopStates.remove(provider))
+        return;
+    writeControllerOutput(
+        Tr::tr("Stop unverified: %1 · cyclic traffic may still be active")
+            .arg(reason),
+        ControllerOutputLevel::Error);
+    emit controllerConnectionChanged();
+}
+
+void WorkbenchController::beginControllerCleanup(
+    Core::ControllerConnectionProvider *provider, const Data::ControllerConnectionSnapshot &snapshot)
+{
+    if (m_shuttingDown || !provider)
+        return;
+    m_controllerStartupStates.remove(provider);
+    m_controllerStopStates.remove(provider);
+    const quint64 providerEpoch = m_controllerConnectionProviderEpochs.value(provider);
+    if (!providerEpoch)
+        return;
+
+    ControllerCleanupState state;
+    state.providerEpoch = providerEpoch;
+    state.scope = snapshot.scope;
+    state.profileId = snapshot.profileId;
+    state.sessionGeneration = snapshot.sessionGeneration;
+    if (snapshot.session) {
+        state.sessionId = snapshot.session->sessionId;
+        state.bootId = snapshot.session->bootId;
+    }
+    state.remainingPolls = controllerCleanupMaximumPolls;
+    if (snapshot.state == Data::ControllerConnectionState::Disconnecting) {
+        state.phase = ControllerCleanupPhase::WaitingForDisconnect;
+        state.disconnectAccepted = true;
+    }
+    m_controllerCleanupStates.insert(provider, state);
+    scheduleControllerCleanup(provider);
+}
+
+void WorkbenchController::scheduleControllerCleanup(
+    Core::ControllerConnectionProvider *provider, int delayMs)
+{
+    if (m_shuttingDown || !provider)
+        return;
+    auto state = m_controllerCleanupStates.find(provider);
+    if (state == m_controllerCleanupStates.end() || state->phase == ControllerCleanupPhase::Failed
+        || state->scheduled) {
+        return;
+    }
+
+    state->scheduled = true;
+    const QPointer<Core::ControllerConnectionProvider> guardedProvider(provider);
+    const Data::ControllerConnectionScope expectedScope = state->scope;
+    const Data::NodeId expectedProfileId = state->profileId;
+    const quint64 expectedGeneration = state->sessionGeneration;
+    const quint64 expectedProviderEpoch = state->providerEpoch;
+    QTimer::singleShot(
+        qMax(0, delayMs),
+        this,
+        [this,
+         guardedProvider,
+         expectedScope,
+         expectedProfileId,
+         expectedGeneration,
+         expectedProviderEpoch] {
+            advanceControllerCleanup(
+                guardedProvider,
+                expectedScope,
+                expectedProfileId,
+                expectedGeneration,
+                expectedProviderEpoch);
+        });
+}
+
+void WorkbenchController::advanceControllerCleanup(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionScope &expectedScope,
+    const Data::NodeId &expectedProfileId,
+    quint64 expectedGeneration,
+    quint64 expectedProviderEpoch)
+{
+    if (m_shuttingDown || !provider)
+        return;
+    auto stateIt = m_controllerCleanupStates.find(provider);
+    if (stateIt == m_controllerCleanupStates.end() || stateIt->scope != expectedScope
+        || stateIt->profileId != expectedProfileId
+        || stateIt->sessionGeneration != expectedGeneration
+        || stateIt->providerEpoch != expectedProviderEpoch) {
+        return;
+    }
+    stateIt->scheduled = false;
+    if (m_controllerConnectionProviderEpochs.value(provider) != expectedProviderEpoch) {
+        failControllerCleanup(
+            provider, Tr::tr("The controller adapter instance changed during cleanup."));
+        return;
+    }
+
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.state == Data::ControllerConnectionState::Disconnected) {
+        finishControllerCleanup(provider);
+        return;
+    }
+    if (snapshot.scope != stateIt->scope || snapshot.profileId != stateIt->profileId) {
+        failControllerCleanup(
+            provider, Tr::tr("The controller connection scope or profile changed during cleanup."));
+        return;
+    }
+    if (snapshot.sessionGeneration != stateIt->sessionGeneration) {
+        if (stateIt->generationChanges >= controllerCleanupMaximumGenerationChanges) {
+            failControllerCleanup(
+                provider, Tr::tr("The controller session changed repeatedly during cleanup."));
+            return;
+        }
+        ControllerCleanupState next;
+        next.providerEpoch = stateIt->providerEpoch;
+        next.scope = stateIt->scope;
+        next.profileId = stateIt->profileId;
+        next.sessionGeneration = snapshot.sessionGeneration;
+        next.generationChanges = stateIt->generationChanges + 1;
+        next.remainingPolls = stateIt->remainingPolls;
+        if (snapshot.session) {
+            next.sessionId = snapshot.session->sessionId;
+            next.bootId = snapshot.session->bootId;
+        }
+        if (snapshot.state == Data::ControllerConnectionState::Disconnecting) {
+            next.phase = ControllerCleanupPhase::WaitingForDisconnect;
+            next.disconnectAccepted = true;
+        }
+        *stateIt = next;
+        scheduleControllerCleanup(provider);
+        return;
+    }
+    if (stateIt->sessionId) {
+        if (!snapshot.session || snapshot.session->sessionId != stateIt->sessionId
+            || snapshot.session->bootId != stateIt->bootId) {
+            failControllerCleanup(
+                provider,
+                Tr::tr("The controller session identity changed without a new generation."));
+            return;
+        }
+    } else if (snapshot.session) {
+        stateIt->sessionId = snapshot.session->sessionId;
+        stateIt->bootId = snapshot.session->bootId;
+    }
+
+    if (stateIt->remainingPolls <= 0) {
+        QString reason = Tr::tr("Timed out while waiting for safe controller cleanup.");
+        if (!stateIt->failure.isEmpty())
+            reason += Tr::tr(" Last error: %1").arg(stateIt->failure);
+        failControllerCleanup(provider, reason);
+        return;
+    }
+    --stateIt->remainingPolls;
+
+    const auto waitForSnapshot = [this, provider, &stateIt](bool refresh) {
+        if (refresh && stateIt->refreshCooldown <= 0) {
+            stateIt->refreshCooldown = controllerCleanupRefreshIntervalPolls;
+            const Utils::Result<> result = provider->refreshController();
+            if (!result)
+                stateIt->failure = result.error();
+        } else if (stateIt->refreshCooldown > 0) {
+            --stateIt->refreshCooldown;
+        }
+        scheduleControllerCleanup(provider, controllerCleanupPollIntervalMs);
+    };
+    const auto dispatchControl =
+        [this,
+         provider,
+         &stateIt](Data::ControllerControlCommand command, ControllerCleanupPhase waitingPhase) {
+            if (!provider->supportsControlCommand(command)) {
+                failControllerCleanup(
+                    provider,
+                    Tr::tr("The controller adapter does not support the required cleanup command."));
+                return;
+            }
+            Data::ControllerControlRequest request;
+            request.command = command;
+            stateIt->phase = waitingPhase;
+            stateIt->refreshCooldown = 0;
+            const Utils::Result<> result = provider->executeControlCommand(request);
+            if (!result) {
+                failControllerCleanup(provider, result.error());
+                return;
+            }
+            scheduleControllerCleanup(provider, controllerCleanupPollIntervalMs);
+        };
+    const auto dispatchDisconnect = [this, provider, &stateIt] {
+        if (stateIt->disconnectAttempts >= controllerCleanupMaximumDisconnectAttempts) {
+            failControllerCleanup(
+                provider, Tr::tr("The controller adapter repeatedly rejected disconnect."));
+            return;
+        }
+        ++stateIt->disconnectAttempts;
+        stateIt->phase = ControllerCleanupPhase::WaitingForDisconnect;
+        stateIt->disconnectAccepted = false;
+        const Utils::Result<> result = provider->disconnectFromController();
+        if (!result) {
+            stateIt->failure = result.error();
+            if (stateIt->disconnectAttempts >= controllerCleanupMaximumDisconnectAttempts) {
+                failControllerCleanup(provider, result.error());
+                return;
+            }
+            stateIt->phase = ControllerCleanupPhase::Evaluate;
+        } else {
+            stateIt->disconnectAccepted = true;
+        }
+        scheduleControllerCleanup(provider, controllerCleanupPollIntervalMs);
+    };
+
+    if (!provider->isAvailable()) {
+        failControllerCleanup(
+            provider, Tr::tr("The controller adapter became unavailable during cleanup."));
+        return;
+    }
+    if (snapshot.state == Data::ControllerConnectionState::Disconnecting) {
+        stateIt->phase = ControllerCleanupPhase::WaitingForDisconnect;
+        stateIt->disconnectAccepted = true;
+        waitForSnapshot(false);
+        return;
+    }
+    if (snapshot.controlProgress.state == Data::ControllerControlState::Pending) {
+        if (stateIt->phase == ControllerCleanupPhase::Evaluate
+            || stateIt->phase == ControllerCleanupPhase::WaitingForStableState
+            || stateIt->phase == ControllerCleanupPhase::WaitingForPending) {
+            stateIt->phase = ControllerCleanupPhase::WaitingForPending;
+        }
+        waitForSnapshot(false);
+        return;
+    }
+
+    switch (stateIt->phase) {
+    case ControllerCleanupPhase::WaitingForPending:
+        stateIt->phase = ControllerCleanupPhase::Evaluate;
+        scheduleControllerCleanup(provider);
+        return;
+    case ControllerCleanupPhase::WaitingForRelease:
+        if (snapshot.session && !snapshot.session->ownsControlLease) {
+            stateIt->phase = ControllerCleanupPhase::Evaluate;
+            scheduleControllerCleanup(provider);
+            return;
+        }
+        if (snapshot.controlProgress.command == Data::ControllerControlCommand::ReleaseControl
+            && snapshot.controlProgress.state == Data::ControllerControlState::Failed) {
+            failControllerCleanup(
+                provider,
+                snapshot.controlProgress.detail.isEmpty()
+                    ? Tr::tr("Release control failed during project cleanup.")
+                    : snapshot.controlProgress.detail);
+            return;
+        }
+        waitForSnapshot(true);
+        return;
+    case ControllerCleanupPhase::WaitingForDisconnect:
+        if (stateIt->disconnectAccepted) {
+            waitForSnapshot(false);
+            return;
+        }
+        stateIt->phase = ControllerCleanupPhase::Evaluate;
+        break;
+    case ControllerCleanupPhase::WaitingForStableState:
+        stateIt->phase = ControllerCleanupPhase::Evaluate;
+        break;
+    case ControllerCleanupPhase::Evaluate:
+        break;
+    case ControllerCleanupPhase::Failed:
+        return;
+    }
+
+    if (snapshot.state == Data::ControllerConnectionState::Connecting
+        || snapshot.state == Data::ControllerConnectionState::Handshaking) {
+        if (snapshot.session) {
+            stateIt->phase = ControllerCleanupPhase::WaitingForStableState;
+            waitForSnapshot(true);
+        } else {
+            dispatchDisconnect();
+        }
+        return;
+    }
+    if (snapshot.state == Data::ControllerConnectionState::Failed) {
+        failControllerCleanup(
+            provider, Tr::tr("The controller connection failed before safe cleanup was confirmed."));
+        return;
+    }
+    if (snapshot.state != Data::ControllerConnectionState::Connected
+        && snapshot.state != Data::ControllerConnectionState::Degraded) {
+        failControllerCleanup(
+            provider, Tr::tr("The controller connection entered an unknown cleanup state."));
+        return;
+    }
+    if (!snapshot.session) {
+        stateIt->phase = ControllerCleanupPhase::WaitingForStableState;
+        stateIt->failure = Tr::tr("The controller session identity is unavailable.");
+        waitForSnapshot(true);
+        return;
+    }
+
+    const Data::ControllerSessionSummary &session = *snapshot.session;
+    if (!session.sessionId || !session.bootId) {
+        stateIt->phase = ControllerCleanupPhase::WaitingForStableState;
+        stateIt->failure = Tr::tr("The controller session identity is incomplete.");
+        waitForSnapshot(true);
+        return;
+    }
+    if (!session.ownsControlLease) {
+        if (session.controlLeaseOwnerSessionId == session.sessionId) {
+            stateIt->phase = ControllerCleanupPhase::WaitingForStableState;
+            stateIt->failure = Tr::tr("The controller lease ownership snapshot is inconsistent.");
+            waitForSnapshot(true);
+            return;
+        }
+        dispatchDisconnect();
+        return;
+    }
+    if (snapshot.readOnly || snapshot.mock
+        || session.controlLeaseOwnerSessionId != session.sessionId) {
+        stateIt->phase = ControllerCleanupPhase::WaitingForStableState;
+        stateIt->failure = Tr::tr("The controller lease ownership snapshot is inconsistent.");
+        waitForSnapshot(true);
+        return;
+    }
+    using Command = Data::ControllerControlCommand;
+    const QString reason
+        = controllerControlStateUnavailableReason(snapshot, Command::ReleaseControl);
+    if (!reason.isEmpty()) {
+        stateIt->phase = ControllerCleanupPhase::WaitingForStableState;
+        stateIt->failure = reason;
+        waitForSnapshot(true);
+        return;
+    }
+    dispatchControl(Command::ReleaseControl, ControllerCleanupPhase::WaitingForRelease);
+}
+
+void WorkbenchController::finishControllerCleanup(Core::ControllerConnectionProvider *provider)
+{
+    const auto state = m_controllerCleanupStates.find(provider);
+    if (state == m_controllerCleanupStates.end())
+        return;
+    const Data::ControllerConnectionScope scope = state->scope;
+    m_controllerCleanupStates.erase(state);
+    if (!controllerCleanupBindingIsRetained(scope)) {
+        m_controllerConnectionSelections.removeIf(
+            [&scope](const ControllerConnectionSelection &selection) {
+                return selection.scope == scope;
+            });
+    }
+    emit controllerConnectionChanged();
+}
+
+void WorkbenchController::failControllerCleanup(
+    Core::ControllerConnectionProvider *provider, const QString &reason)
+{
+    auto state = m_controllerCleanupStates.find(provider);
+    if (state == m_controllerCleanupStates.end() || state->phase == ControllerCleanupPhase::Failed) {
+        return;
+    }
+    state->phase = ControllerCleanupPhase::Failed;
+    state->scheduled = false;
+    state->failure = reason;
+    writeControllerOutput(
+        Tr::tr("Cleanup failed: %1 · connection unchanged").arg(reason),
+        ControllerOutputLevel::Error);
+    emit controllerConnectionChanged();
+}
+
+bool WorkbenchController::controllerCleanupBindingIsRetained(
+    const Data::ControllerConnectionScope &scope) const
+{
+    return std::any_of(
+        m_controllerCleanupStates.cbegin(),
+        m_controllerCleanupStates.cend(),
+        [&scope](const ControllerCleanupState &state) { return state.scope == scope; });
+}
+
+ControllerConnectionSelection *WorkbenchController::mutableControllerConnectionSelection(
+    const Data::ControllerConnectionScope &scope)
+{
+    const auto selection = std::find_if(
+        m_controllerConnectionSelections.begin(),
+        m_controllerConnectionSelections.end(),
+        [&scope](const ControllerConnectionSelection &candidate) {
+            return candidate.scope == scope;
+        });
+    return selection == m_controllerConnectionSelections.end() ? nullptr : &*selection;
+}
+
+} // namespace EtherCAT::Workbench::Internal

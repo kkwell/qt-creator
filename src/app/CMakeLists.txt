@@ -108,7 +108,7 @@ if (WIN32)
     RC_ICON_PATH=${IDE_ICON_PATH}
   )
 
-  target_sources(qtcreator PRIVATE qtcreator.rc)
+  target_sources(qtcreator PRIVATE qtcreator.rc embedlabs.ico)
 endif()
 
 if (APPLE)
@@ -117,6 +117,7 @@ if (APPLE)
   endif()
   set_target_properties(qtcreator PROPERTIES
       MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/app-Info.plist"
+      MACOSX_BUNDLE_BUNDLE_NAME "${IDE_DISPLAY_NAME}"
   )
   # icon
   ## Roughly check for Xcode 26 tools for the default icon generation method
@@ -195,20 +196,16 @@ if (APPLE)
       ${QTCREATOR_PROJECT_ICONSET_FILES}
     VERBATIM
   )
-  target_sources(qtcreator
-    PRIVATE
-      "${CMAKE_CURRENT_BINARY_DIR}/Assets.car"
-      ${QTCREATOR_APP_ICON}
-      "${CMAKE_CURRENT_BINARY_DIR}/qtcreator-project.icns"
+  set(QTCREATOR_BUNDLE_RESOURCES
+    "${CMAKE_CURRENT_BINARY_DIR}/Assets.car"
+    "${QTCREATOR_APP_ICON}"
+    "${IDE_ICON_PATH}/macos/qtcreator.icon/Assets/icon.png"
+    "${CMAKE_CURRENT_BINARY_DIR}/qtcreator-project.icns"
   )
-  qtc_copy_to_builddir(copy_icns
-    DESTINATION ${IDE_DATA_PATH}
-    FILES
-      ${CMAKE_CURRENT_BINARY_DIR}/Assets.car
-      "${QTCREATOR_APP_ICON}"
-      ${IDE_ICON_PATH}/macos/qtcreator.icon/Assets/icon.png
-      ${CMAKE_CURRENT_BINARY_DIR}/qtcreator-project.icns
+  set_source_files_properties(${QTCREATOR_BUNDLE_RESOURCES}
+    PROPERTIES MACOSX_PACKAGE_LOCATION Resources
   )
+  target_sources(qtcreator PRIVATE ${QTCREATOR_BUNDLE_RESOURCES})
   install(
     FILES
       ${CMAKE_CURRENT_BINARY_DIR}/Assets.car

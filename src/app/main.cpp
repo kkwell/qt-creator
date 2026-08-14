@@ -29,6 +29,7 @@
 #include <utils/textcodec.h>
 
 #include <QAccessible>
+#include <QApplication>
 #include <QCryptographicHash>
 #include <QDebug>
 #include <QDialogButtonBox>

@@ -1,0 +1,48 @@
+{
+  "apiVersion": "controller.embed-labs.dev/v1",
+  "kind": "AdapterManifest",
+  "metadata": {
+    "id": "mock.adapter.cia402-servo.axis1",
+    "version": "1.0.0",
+    "createdAt": "2026-07-25T00:00:00Z",
+    "description": "Mock-only exact-ESI adapter for the CiA402 servo fixture"
+  },
+  "spec": {
+    "validationState": "mock-only",
+    "origin": "exact-esi",
+    "matchPriority": 800,
+    "identityScope": {
+      "vendorId": 286331153,
+      "productCode": 8193,
+      "minimumRevision": 1,
+      "maximumRevision": 1
+    },
+    "esiSha256": [
+      "4bf158b257ce44b357b792cc9b5c3a001405e65d936110473ee9cfe3f433d936"
+    ],
+    "deviceModel": {
+      "id": "mock.cia402-servo.axis1",
+      "version": "1.0.0",
+      "sha256": "b9202480bdfabcf18aa48104d55b131111070470fc8d1b1f7b70d23798277363"
+    },
+    "capabilities": [
+      "coe",
+      "distributed-clocks",
+      "cia402",
+      "diagnostics"
+    ],
+    "privateInitializationStatus": "not-required",
+    "evidence": [
+      {
+        "kind": "schema-validation",
+        "result": "passed",
+        "artifactSha256": "b9202480bdfabcf18aa48104d55b131111070470fc8d1b1f7b70d23798277363",
+        "uri": "mock://evidence/issue-ai-controller-001/cia402-servo",
+        "recordedAt": "2026-07-25T00:00:00Z",
+        "notes": "Offline schema and semantic fixture qualification only; no drive was energized."
+      }
+    ],
+    "signature": null,
+    "realHardwareAllowed": false
+  }
+}

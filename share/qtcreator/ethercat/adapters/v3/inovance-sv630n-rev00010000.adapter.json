@@ -1,0 +1,1621 @@
+{
+  "schemaVersion": "embed-labs.device-adapter/v3",
+  "id": "org.embedlabs.adapter.inovance.sv630n-1axis.rev00010000",
+  "version": "0.3.0",
+  "displayName": "Inovance SV630N one-axis revision 0x00010000",
+  "description": "API-038 upper-layer adapter for the exact DC RxPDO 0x1704 and TxPDO 0x1b04 profile.",
+  "qualification": "qualified",
+  "matchPriority": 1100,
+  "match": {
+    "vendorId": 1048576,
+    "productCode": 786706,
+    "minimumRevision": 65536,
+    "maximumRevision": 65536,
+    "exactEsiSha256": "e6f39fd4e0f8801c83ec3ac796e138fe3ee1566cb94bb28285b93538fdb9e4a1"
+  },
+  "controllerAdapterTarget": {
+    "adapterId": "inovance.sv630n_1axis_rev00010000_csp",
+    "adapterVersion": "1.5.0",
+    "adapterSha256": "f5b8d1d579b9804927d9749b8ca61e18f4701ab5be75626aeda7459b9a9db99e",
+    "esiSha256": "e6f39fd4e0f8801c83ec3ac796e138fe3ee1566cb94bb28285b93538fdb9e4a1"
+  },
+  "capabilities": [
+    "org.embedlabs.ethercat.cia402",
+    "org.embedlabs.ethercat.coe",
+    "org.embedlabs.ethercat.diagnostics",
+    "org.embedlabs.ethercat.distributed-clocks",
+    "org.embedlabs.motion.velocity"
+  ],
+  "source": {
+    "id": "org.embedlabs.esi.inovance.sv630n-v16",
+    "version": "16",
+    "location": "resource://ethercat/esi/INOVANCE_SV630N_1Axis_V16.xml",
+    "sha256": "e6f39fd4e0f8801c83ec3ac796e138fe3ee1566cb94bb28285b93538fdb9e4a1"
+  },
+  "evidenceSha256": "",
+  "signatureVerified": false,
+  "realHardwareAllowed": false,
+  "signals": [
+    {
+      "id": "org.embedlabs.inovance.sv630n.actual-position",
+      "displayName": "actual position",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24676,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "encoder_count",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "-2147483648",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "2147483647",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.actual-torque",
+      "displayName": "actual torque",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24695,
+          "subIndex": 0,
+          "physicalType": "integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "-32768",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "32767",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.actual-velocity",
+      "displayName": "actual velocity",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24684,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "reference_unit_per_second",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "-2147483648",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "2147483647",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.controlword",
+      "displayName": "controlword",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5892,
+          "objectIndex": 24640,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "65535",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "unsigned-integer",
+        "value": "0"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.error-code",
+      "displayName": "error code",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24639,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "65535",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.following-error",
+      "displayName": "following error",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24820,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "encoder_count",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "-2147483648",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "2147483647",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.max-profile-velocity",
+      "displayName": "max profile velocity",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "read-only",
+      "exposure": "internal",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5892,
+          "objectIndex": 24703,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "4294967295",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.mode-command",
+      "displayName": "mode command",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5892,
+          "objectIndex": 24672,
+          "subIndex": 0,
+          "physicalType": "integer8",
+          "bitWidth": 8,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "-128",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "127",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "signed-integer",
+        "value": "0"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.mode-display",
+      "displayName": "mode display",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24673,
+          "subIndex": 0,
+          "physicalType": "integer8",
+          "bitWidth": 8,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "-128",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "127",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.negative-torque-limit",
+      "displayName": "negative torque limit",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "read-only",
+      "exposure": "internal",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5892,
+          "objectIndex": 24801,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "65535",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.positive-torque-limit",
+      "displayName": "positive torque limit",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "read-only",
+      "exposure": "internal",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5892,
+          "objectIndex": 24800,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "65535",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.statusword",
+      "displayName": "statusword",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24641,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "65535",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.target-position",
+      "displayName": "target position",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "read-only",
+      "exposure": "internal",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5892,
+          "objectIndex": 24698,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "encoder_count",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "-2147483648",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "2147483647",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.target-torque",
+      "displayName": "target torque",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "read-only",
+      "exposure": "internal",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5892,
+          "objectIndex": 24689,
+          "subIndex": 0,
+          "physicalType": "integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "-32768",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "32767",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.target-velocity",
+      "displayName": "target velocity",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5892,
+          "objectIndex": 24831,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "reference_unit_per_second",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "-2147483648",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "2147483647",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "signed-integer",
+        "value": "0"
+      }
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.touch-probe-function",
+      "displayName": "touch probe function",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "output",
+      "access": "read-only",
+      "exposure": "internal",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5892,
+          "objectIndex": 24760,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "65535",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.touch-probe-position-1",
+      "displayName": "touch probe position 1",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24762,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "encoder_count",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "-2147483648",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "2147483647",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.touch-probe-position-2",
+      "displayName": "touch probe position 2",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24764,
+          "subIndex": 0,
+          "physicalType": "integer32",
+          "bitWidth": 32,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "encoder_count",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "-2147483648",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "2147483647",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.touch-probe-status",
+      "displayName": "touch probe status",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.inovance.sv630n.raw-drive-unit"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6916,
+          "objectIndex": 24761,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "65535",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    }
+  ],
+  "processDataProfiles": [
+    {
+      "id": "org.embedlabs.inovance.sv630n.api038-csp-1704-1b04",
+      "signedPdoProfileId": "csp_1704_1b04",
+      "signedDcProfileId": "sync0_125us",
+      "rxPdos": [
+        5892
+      ],
+      "txPdos": [
+        6916
+      ],
+      "requiredSignals": [
+        "org.embedlabs.inovance.sv630n.actual-position",
+        "org.embedlabs.inovance.sv630n.actual-torque",
+        "org.embedlabs.inovance.sv630n.actual-velocity",
+        "org.embedlabs.inovance.sv630n.controlword",
+        "org.embedlabs.inovance.sv630n.error-code",
+        "org.embedlabs.inovance.sv630n.following-error",
+        "org.embedlabs.inovance.sv630n.max-profile-velocity",
+        "org.embedlabs.inovance.sv630n.mode-command",
+        "org.embedlabs.inovance.sv630n.mode-display",
+        "org.embedlabs.inovance.sv630n.negative-torque-limit",
+        "org.embedlabs.inovance.sv630n.positive-torque-limit",
+        "org.embedlabs.inovance.sv630n.statusword",
+        "org.embedlabs.inovance.sv630n.target-position",
+        "org.embedlabs.inovance.sv630n.target-torque",
+        "org.embedlabs.inovance.sv630n.target-velocity",
+        "org.embedlabs.inovance.sv630n.touch-probe-function",
+        "org.embedlabs.inovance.sv630n.touch-probe-position-1",
+        "org.embedlabs.inovance.sv630n.touch-probe-position-2",
+        "org.embedlabs.inovance.sv630n.touch-probe-status"
+      ]
+    }
+  ],
+  "moduleProfiles": [],
+  "controlActions": [
+    {
+      "id": "org.embedlabs.inovance.sv630n.action.prepare-csv",
+      "displayName": "prepare csv",
+      "description": "API-038 signed semantic action definition.",
+      "enabled": false,
+      "qualification": "unqualified",
+      "disabledReason": "reference_unit_to_rpm_conversion_not_bound",
+      "requiresDc": true,
+      "expectedSignedDefinitionSha256": "4a8bc220a783e600c25b9842802678712d8f4e3a0eb0a1948f295145105551bd",
+      "signedPdoProfileIds": [
+        "csp_1704_1b04"
+      ],
+      "failureDisposition": "hold-operational-fault",
+      "requiredSignals": [
+        "org.embedlabs.inovance.sv630n.controlword",
+        "org.embedlabs.inovance.sv630n.mode-command",
+        "org.embedlabs.inovance.sv630n.statusword",
+        "org.embedlabs.inovance.sv630n.target-velocity"
+      ],
+      "optionalSignals": [
+        "org.embedlabs.inovance.sv630n.mode-display"
+      ],
+      "parameters": [],
+      "consistencyGroups": [
+        {
+          "id": "manual_velocity",
+          "members": [
+            "org.embedlabs.inovance.sv630n.controlword",
+            "org.embedlabs.inovance.sv630n.mode-command",
+            "org.embedlabs.inovance.sv630n.target-velocity"
+          ],
+          "recovery": "hold-safe",
+          "maxTtlCycles": 1000
+        }
+      ],
+      "steps": [
+        {
+          "kind": "write-group",
+          "consistencyGroup": "manual_velocity",
+          "assignments": [
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.controlword",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "unsigned-integer",
+                  "value": "6"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.mode-command",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "signed-integer",
+                  "value": "9"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.target-velocity",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "signed-integer",
+                  "value": "0"
+                },
+                "parameterId": null
+              }
+            }
+          ]
+        },
+        {
+          "kind": "wait-masked-equals",
+          "signalId": "org.embedlabs.inovance.sv630n.statusword",
+          "value": {
+            "kind": "unsigned-integer",
+            "value": "33"
+          },
+          "mask": {
+            "kind": "unsigned-integer",
+            "value": "111"
+          },
+          "timeoutCycles": 1000
+        },
+        {
+          "kind": "write-group",
+          "consistencyGroup": "manual_velocity",
+          "assignments": [
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.controlword",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "unsigned-integer",
+                  "value": "7"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.mode-command",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "signed-integer",
+                  "value": "9"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.target-velocity",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "signed-integer",
+                  "value": "0"
+                },
+                "parameterId": null
+              }
+            }
+          ]
+        },
+        {
+          "kind": "wait-masked-equals",
+          "signalId": "org.embedlabs.inovance.sv630n.statusword",
+          "value": {
+            "kind": "unsigned-integer",
+            "value": "35"
+          },
+          "mask": {
+            "kind": "unsigned-integer",
+            "value": "111"
+          },
+          "timeoutCycles": 1000
+        },
+        {
+          "kind": "write-group",
+          "consistencyGroup": "manual_velocity",
+          "assignments": [
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.controlword",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "unsigned-integer",
+                  "value": "15"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.mode-command",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "signed-integer",
+                  "value": "9"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.target-velocity",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "signed-integer",
+                  "value": "0"
+                },
+                "parameterId": null
+              }
+            }
+          ]
+        },
+        {
+          "kind": "wait-masked-equals",
+          "signalId": "org.embedlabs.inovance.sv630n.statusword",
+          "value": {
+            "kind": "unsigned-integer",
+            "value": "39"
+          },
+          "mask": {
+            "kind": "unsigned-integer",
+            "value": "111"
+          },
+          "timeoutCycles": 1000
+        }
+      ]
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.action.set-csv-velocity",
+      "displayName": "set csv velocity",
+      "description": "API-038 signed semantic action definition.",
+      "enabled": false,
+      "qualification": "unqualified",
+      "disabledReason": "reference_unit_to_rpm_conversion_not_bound",
+      "requiresDc": true,
+      "expectedSignedDefinitionSha256": "1355c4d05de03d96f8064f60706e7eb7f0fb381caa715b5dc3f607164114a90a",
+      "signedPdoProfileIds": [
+        "csp_1704_1b04"
+      ],
+      "failureDisposition": "hold-operational-fault",
+      "requiredSignals": [
+        "org.embedlabs.inovance.sv630n.controlword",
+        "org.embedlabs.inovance.sv630n.mode-command",
+        "org.embedlabs.inovance.sv630n.statusword",
+        "org.embedlabs.inovance.sv630n.target-velocity"
+      ],
+      "optionalSignals": [
+        "org.embedlabs.inovance.sv630n.actual-velocity"
+      ],
+      "parameters": [
+        {
+          "id": "target_velocity",
+          "displayName": "target velocity",
+          "description": "API-038 signed action parameter.",
+          "dataType": "integer32",
+          "unit": "reference_unit_per_second",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "-1000",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1000",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "signed-integer",
+            "value": "0"
+          }
+        }
+      ],
+      "consistencyGroups": [
+        {
+          "id": "manual_velocity",
+          "members": [
+            "org.embedlabs.inovance.sv630n.controlword",
+            "org.embedlabs.inovance.sv630n.mode-command",
+            "org.embedlabs.inovance.sv630n.target-velocity"
+          ],
+          "recovery": "hold-safe",
+          "maxTtlCycles": 1000
+        }
+      ],
+      "steps": [
+        {
+          "kind": "wait-masked-equals",
+          "signalId": "org.embedlabs.inovance.sv630n.statusword",
+          "value": {
+            "kind": "unsigned-integer",
+            "value": "39"
+          },
+          "mask": {
+            "kind": "unsigned-integer",
+            "value": "111"
+          },
+          "timeoutCycles": 1000
+        },
+        {
+          "kind": "write-group",
+          "consistencyGroup": "manual_velocity",
+          "assignments": [
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.controlword",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "unsigned-integer",
+                  "value": "15"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.mode-command",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "signed-integer",
+                  "value": "9"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.target-velocity",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "target_velocity"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "org.embedlabs.inovance.sv630n.action.stop-csv",
+      "displayName": "stop csv",
+      "description": "API-038 signed semantic action definition.",
+      "enabled": false,
+      "qualification": "unqualified",
+      "disabledReason": "reference_unit_to_rpm_conversion_not_bound",
+      "requiresDc": true,
+      "expectedSignedDefinitionSha256": "df27cc25c14dfb4b6aa435d4ab5d853e051f2e754e3c16093925f5ccf69393d3",
+      "signedPdoProfileIds": [
+        "csp_1704_1b04"
+      ],
+      "failureDisposition": "hold-operational-fault",
+      "requiredSignals": [
+        "org.embedlabs.inovance.sv630n.actual-velocity",
+        "org.embedlabs.inovance.sv630n.controlword",
+        "org.embedlabs.inovance.sv630n.mode-command",
+        "org.embedlabs.inovance.sv630n.statusword",
+        "org.embedlabs.inovance.sv630n.target-velocity"
+      ],
+      "optionalSignals": [
+        "org.embedlabs.inovance.sv630n.mode-display"
+      ],
+      "parameters": [],
+      "consistencyGroups": [
+        {
+          "id": "manual_velocity",
+          "members": [
+            "org.embedlabs.inovance.sv630n.controlword",
+            "org.embedlabs.inovance.sv630n.mode-command",
+            "org.embedlabs.inovance.sv630n.target-velocity"
+          ],
+          "recovery": "hold-safe",
+          "maxTtlCycles": 1000
+        }
+      ],
+      "steps": [
+        {
+          "kind": "write-group",
+          "consistencyGroup": "manual_velocity",
+          "assignments": [
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.controlword",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "unsigned-integer",
+                  "value": "11"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.mode-command",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "signed-integer",
+                  "value": "9"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.target-velocity",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "signed-integer",
+                  "value": "0"
+                },
+                "parameterId": null
+              }
+            }
+          ]
+        },
+        {
+          "kind": "wait-masked-equals",
+          "signalId": "org.embedlabs.inovance.sv630n.statusword",
+          "value": {
+            "kind": "unsigned-integer",
+            "value": "64"
+          },
+          "mask": {
+            "kind": "unsigned-integer",
+            "value": "111"
+          },
+          "timeoutCycles": 8000
+        },
+        {
+          "kind": "wait-absolute-at-most",
+          "signalId": "org.embedlabs.inovance.sv630n.actual-velocity",
+          "limit": {
+            "kind": "signed-integer",
+            "value": "10"
+          },
+          "timeoutCycles": 8000
+        },
+        {
+          "kind": "write-group",
+          "consistencyGroup": "manual_velocity",
+          "assignments": [
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.controlword",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "unsigned-integer",
+                  "value": "0"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.mode-command",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "signed-integer",
+                  "value": "0"
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.inovance.sv630n.target-velocity",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "signed-integer",
+                  "value": "0"
+                },
+                "parameterId": null
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

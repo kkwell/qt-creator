@@ -48434,4 +48434,9480 @@ What do you want to do?</source>
         <translation type="unfinished">文本</translation>
     </message>
 </context>
+<context>
+    <name>QtC::EtherCATAutomationGateway</name>
+    <message>
+        <source>Output</source>
+        <translation>输出</translation>
+    </message>
+    <message>
+        <source>Automation Gateway</source>
+        <translation>自动化网关</translation>
+    </message>
+    <message>
+        <source>EtherCAT Controller</source>
+        <translation>EtherCAT 控制器</translation>
+    </message>
+    <message>
+        <source>EtherCAT Automation Gateway settings</source>
+        <translation>EtherCAT 自动化网关设置</translation>
+    </message>
+    <message>
+        <source>Enable loopback automation service</source>
+        <translation>启用本机回环自动化服务</translation>
+    </message>
+    <message>
+        <source>Enable EtherCAT Automation Gateway</source>
+        <translation>启用 EtherCAT 自动化网关</translation>
+    </message>
+    <message>
+        <source>Gateway loopback address</source>
+        <translation>网关回环地址</translation>
+    </message>
+    <message>
+        <source>MCP loopback port</source>
+        <translation>MCP 回环端口</translation>
+    </message>
+    <message>
+        <source>REST loopback port</source>
+        <translation>REST 回环端口</translation>
+    </message>
+    <message>
+        <source>Gateway runtime state</source>
+        <translation>网关运行状态</translation>
+    </message>
+    <message>
+        <source>Actual MCP endpoint</source>
+        <translation>实际 MCP 端点</translation>
+    </message>
+    <message>
+        <source>Actual REST endpoint</source>
+        <translation>实际 REST 端点</translation>
+    </message>
+    <message>
+        <source>Gateway error information</source>
+        <translation>网关错误信息</translation>
+    </message>
+    <message>
+        <source>Gateway safety boundary</source>
+        <translation>网关安全边界</translation>
+    </message>
+    <message>
+        <source>Automatic (0)</source>
+        <translation>自动分配 (0)</translation>
+    </message>
+    <message>
+        <source>Safety boundary: controller views are loopback-only, Mock-only, and read-only. The semantic action tool only submits signed, cycle-bounded intents to the IDE service; a verified user must approve them separately, and the Gateway never calls a Provider or controller directly.</source>
+        <translation>安全边界：控制器视图仅限本机回环、仅限 Mock 且只读。语义动作工具只向 IDE 服务提交已签名且有周期时限的意图；必须由已验证用户另行批准，网关绝不直接调用 Provider 或控制器。</translation>
+    </message>
+    <message>
+        <source>Loopback address:</source>
+        <translation>回环地址：</translation>
+    </message>
+    <message>
+        <source>MCP port:</source>
+        <translation>MCP 端口：</translation>
+    </message>
+    <message>
+        <source>REST port:</source>
+        <translation>REST 端口：</translation>
+    </message>
+    <message>
+        <source>Runtime state:</source>
+        <translation>运行状态：</translation>
+    </message>
+    <message>
+        <source>MCP endpoint:</source>
+        <translation>MCP 端点：</translation>
+    </message>
+    <message>
+        <source>REST endpoint:</source>
+        <translation>REST 端点：</translation>
+    </message>
+    <message>
+        <source>Last error:</source>
+        <translation>最近错误：</translation>
+    </message>
+    <message>
+        <source>Unavailable</source>
+        <translation>不可用</translation>
+    </message>
+    <message>
+        <source>Stopped</source>
+        <translation>已停止</translation>
+    </message>
+    <message>
+        <source>Starting</source>
+        <translation>正在启动</translation>
+    </message>
+    <message>
+        <source>Running</source>
+        <translation>正在运行</translation>
+    </message>
+    <message>
+        <source>Stopping</source>
+        <translation>正在停止</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>失败</translation>
+    </message>
+    <message>
+        <source>Not listening</source>
+        <translation>未监听</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>无</translation>
+    </message>
+    <message>
+        <source>The MCP port must be between 0 and 65535.</source>
+        <translation>MCP 端口必须介于 0 到 65535 之间。</translation>
+    </message>
+    <message>
+        <source>The REST port must be between 0 and 65535.</source>
+        <translation>REST 端口必须介于 0 到 65535 之间。</translation>
+    </message>
+    <message>
+        <source>MCP and REST ports must differ when both are non-zero.</source>
+        <translation>当 MCP 和 REST 端口均非零时，两者必须不同。</translation>
+    </message>
+    <message>
+        <source>IDE settings are unavailable.</source>
+        <translation>IDE 设置不可用。</translation>
+    </message>
+    <message>
+        <source>The stored Gateway port settings are invalid.</source>
+        <translation>已保存的网关端口设置无效。</translation>
+    </message>
+    <message>
+        <source>The Gateway settings could not be saved.</source>
+        <translation>无法保存网关设置。</translation>
+    </message>
+    <message>
+        <source>Safe settings could not be persisted: %1</source>
+        <translation>无法持久化安全设置：%1</translation>
+    </message>
+    <message>
+        <source>The IDE AutomationService is unavailable.</source>
+        <translation>IDE AutomationService 不可用。</translation>
+    </message>
+    <message>
+        <source>Stopped; both loopback listeners were released.</source>
+        <translation>已停止；两个回环监听器均已释放。</translation>
+    </message>
+    <message>
+        <source>Disable the running Gateway before changing its ports.</source>
+        <translation>更改端口前请先禁用正在运行的网关。</translation>
+    </message>
+    <message>
+        <source>Could not start the loopback listeners: %1</source>
+        <translation>无法启动回环监听器：%1</translation>
+    </message>
+    <message>
+        <source>The listeners were stopped because settings could not be saved: %1</source>
+        <translation>因无法保存设置，监听器已停止：%1</translation>
+    </message>
+    <message>
+        <source>Listening on MCP %1 and REST %2 (controller views are Mock-only/read-only; signed semantic action intents require separate user approval).</source>
+        <translation>正在监听 MCP %1 和 REST %2（控制器视图仅限 Mock/只读；已签名的语义动作意图需要用户另行批准）。</translation>
+    </message>
+    <message>
+        <source>Safe disabled state could not be persisted: %1</source>
+        <translation>无法持久化安全禁用状态：%1</translation>
+    </message>
+    <message>
+        <source>MCP</source>
+        <translation>MCP</translation>
+    </message>
+    <message>
+        <source>REST</source>
+        <translation>REST</translation>
+    </message>
+    <message>
+        <source>loopback</source>
+        <translation>回环</translation>
+    </message>
+    <message>
+        <source>Mock-only</source>
+        <translation>仅限 Mock</translation>
+    </message>
+    <message>
+        <source>read-only</source>
+        <translation>只读</translation>
+    </message>
+</context>
+<context>
+    <name>QtC::EtherCATCore</name>
+    <message>
+        <source>EtherCAT</source>
+        <translation>EtherCAT</translation>
+    </message>
+    <message>
+        <source>Show advanced EtherCAT properties</source>
+        <translation>显示高级 EtherCAT 属性</translation>
+    </message>
+    <message>
+        <source>Maximum recent diagnostic events:</source>
+        <translation>最近诊断事件最大数量：</translation>
+    </message>
+    <message>
+        <source>General</source>
+        <translation>常规</translation>
+    </message>
+    <message>
+        <source>This controller provider does not support control commands.</source>
+        <translation>此控制器提供程序不支持控制命令。</translation>
+    </message>
+    <message>
+        <source>This controller provider does not support package deployment.</source>
+        <translation>此控制器提供程序不支持控制器包部署。</translation>
+    </message>
+    <message>
+        <source>This controller provider does not support canceling package deployment.</source>
+        <translation>此控制器提供程序不支持取消控制器包部署。</translation>
+    </message>
+    <message>
+        <source>This controller provider does not support editing connection profiles.</source>
+        <translation>此控制器提供程序不支持编辑连接配置。</translation>
+    </message>
+</context>
+<context>
+    <name>QtC::EtherCATDevices</name>
+    <message>
+        <source>Stored ESI SHA-256 mismatch for %1.</source>
+        <translation>%1 已存储的 ESI SHA-256 不匹配。</translation>
+    </message>
+    <message>
+        <source>Cancellation cleanup failed: %1</source>
+        <translation>取消后的清理失败：%1</translation>
+    </message>
+    <message>
+        <source>ESI Device Repository</source>
+        <translation>ESI 设备存储库</translation>
+    </message>
+    <message>
+        <source>PDO entry %1 uses unsupported data type %2.</source>
+        <translation>PDO 条目 %1 使用了不支持的数据类型 %2。</translation>
+    </message>
+    <message>
+        <source>Startup parameter %1:%2 contains invalid hexadecimal data.</source>
+        <translation>启动参数 %1:%2 包含无效的十六进制数据。</translation>
+    </message>
+    <message>
+        <source>DC mode %1 has formula attributes on %2; the literal value is available but the formula is preserved only in the source XML.</source>
+        <translation>DC 模式 %1 的 %2 带有公式属性；字面值可用，但公式仅保留在源 XML 中。</translation>
+    </message>
+    <message>
+        <source>ESI Device is missing its Type element.</source>
+        <translation>ESI Device 缺少 Type 元素。</translation>
+    </message>
+    <message>
+        <source>ESI Device Type is missing a valid ProductCode or RevisionNo identity field.</source>
+        <translation>ESI Device Type 缺少有效的 ProductCode 或 RevisionNo 标识字段。</translation>
+    </message>
+    <message>
+        <source>ESI Device is missing both Name and Type text.</source>
+        <translation>ESI Device 同时缺少 Name 和 Type 文本。</translation>
+    </message>
+    <message>
+        <source>%1 structure is preserved in the original XML but is not expanded.</source>
+        <translation>%1 结构已保留在原始 XML 中，但未展开。</translation>
+    </message>
+    <message>
+        <source>The ESI file does not contain a root element.</source>
+        <translation>ESI 文件不包含根元素。</translation>
+    </message>
+    <message>
+        <source>Malformed ESI XML at line %1, column %2: %3</source>
+        <translation>ESI XML 格式错误，位于第 %1 行、第 %2 列：%3</translation>
+    </message>
+    <message>
+        <source>Unexpected ESI root element &apos;%1&apos;; expected EtherCATInfo.</source>
+        <translation>意外的 ESI 根元素“%1”；应为 EtherCATInfo。</translation>
+    </message>
+    <message>
+        <source>ESI Vendor is missing a valid Id identity field.</source>
+        <translation>ESI Vendor 缺少有效的 Id 标识字段。</translation>
+    </message>
+    <message>
+        <source>ESI Descriptions is missing its Devices collection.</source>
+        <translation>ESI Descriptions 缺少 Devices 集合。</translation>
+    </message>
+    <message>
+        <source>%1: %2</source>
+        <translation>%1：%2</translation>
+    </message>
+    <message>
+        <source>Unrecognized ESI namespace &apos;%1&apos;; elements were matched by local name.</source>
+        <translation>无法识别 ESI 命名空间“%1”；已按本地名称匹配元素。</translation>
+    </message>
+    <message>
+        <source>ESI Devices collection is empty.</source>
+        <translation>ESI Devices 集合为空。</translation>
+    </message>
+    <message>
+        <source>Object 0x%1 does not declare a valid synchronization-types-supported value at subindex 4.</source>
+        <translation>对象 0x%1 未在子索引 4 声明有效的“支持的同步类型”值。</translation>
+    </message>
+    <message>
+        <source>Objects 0x1C32 and 0x1C33 declare different synchronization types supported (0x%1 and 0x%2); the original ESI values were preserved.</source>
+        <translation>对象 0x1C32 和 0x1C33 声明的支持同步类型不同（0x%1 与 0x%2）；已保留原始 ESI 值。</translation>
+    </message>
+</context>
+<context>
+    <name>QtC::EtherCATDiagnostics</name>
+    <message>
+        <source>Stopped</source>
+        <translation>已停止</translation>
+    </message>
+    <message>
+        <source>Starting</source>
+        <translation>正在启动</translation>
+    </message>
+    <message>
+        <source>Running</source>
+        <translation>正在运行</translation>
+    </message>
+    <message>
+        <source>Stopping</source>
+        <translation>正在停止</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>失败</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>未知</translation>
+    </message>
+    <message>
+        <source>Offline</source>
+        <translation>离线</translation>
+    </message>
+    <message>
+        <source>Mock Config</source>
+        <translation>Mock 配置</translation>
+    </message>
+    <message>
+        <source>Mock FreeRun</source>
+        <translation>Mock 自由运行</translation>
+    </message>
+    <message>
+        <source>Mock Run / OP</source>
+        <translation>Mock 运行 / OP</translation>
+    </message>
+    <message>
+        <source>INIT</source>
+        <translation>INIT</translation>
+    </message>
+    <message>
+        <source>PREOP</source>
+        <translation>PREOP</translation>
+    </message>
+    <message>
+        <source>SAFEOP</source>
+        <translation>SAFEOP</translation>
+    </message>
+    <message>
+        <source>OP</source>
+        <translation>OP</translation>
+    </message>
+    <message>
+        <source>BOOTSTRAP</source>
+        <translation>BOOTSTRAP</translation>
+    </message>
+    <message>
+        <source>Valid</source>
+        <translation>有效</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>不完整</translation>
+    </message>
+    <message>
+        <source>Zero</source>
+        <translation>零</translation>
+    </message>
+    <message>
+        <source>Error</source>
+        <translation>错误</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <translation>断开</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <translation>连接</translation>
+    </message>
+    <message>
+        <source>Not configured</source>
+        <translation>未配置</translation>
+    </message>
+    <message>
+        <source>Synchronizing</source>
+        <translation>正在同步</translation>
+    </message>
+    <message>
+        <source>Synchronized</source>
+        <translation>已同步</translation>
+    </message>
+    <message>
+        <source>Lost</source>
+        <translation>已失步</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>事件</translation>
+    </message>
+    <message>
+        <source>Active</source>
+        <translation>活动</translation>
+    </message>
+    <message>
+        <source>Acknowledged</source>
+        <translation>已确认</translation>
+    </message>
+    <message>
+        <source>Recovered</source>
+        <translation>已恢复</translation>
+    </message>
+    <message>
+        <source>Information</source>
+        <translation>信息</translation>
+    </message>
+    <message>
+        <source>Warning</source>
+        <translation>警告</translation>
+    </message>
+    <message>
+        <source>Critical</source>
+        <translation>严重</translation>
+    </message>
+    <message>
+        <source>Normal Mock data</source>
+        <translation>正常 Mock 数据</translation>
+    </message>
+    <message>
+        <source>Mock WKC mismatch</source>
+        <translation>Mock WKC 不匹配</translation>
+    </message>
+    <message>
+        <source>Mock link interruption</source>
+        <translation>Mock 链路中断</translation>
+    </message>
+    <message>
+        <source>Mock DC drift</source>
+        <translation>Mock DC 漂移</translation>
+    </message>
+    <message>
+        <source>Mock deadline pressure</source>
+        <translation>Mock 截止时间压力</translation>
+    </message>
+    <message>
+        <source>Mock alarm burst</source>
+        <translation>Mock 告警突发</translation>
+    </message>
+    <message>
+        <source>Mock source failure</source>
+        <translation>Mock 数据源故障</translation>
+    </message>
+    <message>
+        <source>MOCK cycle jitter trend (ns)</source>
+        <translation>MOCK 周期抖动趋势 (ns)</translation>
+    </message>
+    <message>
+        <source>MOCK DIAGNOSTICS - local synthetic data only; no EtherCAT hardware or controller is connected.</source>
+        <translation>MOCK 诊断 - 仅使用本地合成数据；未连接 EtherCAT 硬件或控制器。</translation>
+    </message>
+    <message>
+        <source>Mock scenario:</source>
+        <translation>Mock 场景：</translation>
+    </message>
+    <message>
+        <source>Selected offline node: %1 (%2) - MOCK data</source>
+        <translation>已选离线节点：%1 (%2) - MOCK 数据</translation>
+    </message>
+    <message>
+        <source>MOCK diagnostics provider was removed.</source>
+        <translation>MOCK 诊断提供程序已移除。</translation>
+    </message>
+    <message>
+        <source>MOCK stream: %1
+Source period: %2 ms; UI publish period: %3 ms
+%4</source>
+        <translation>MOCK 数据流：%1
+数据源周期：%2 ms；UI 发布周期：%3 ms
+%4</translation>
+    </message>
+    <message>
+        <source>Status</source>
+        <translation>状态</translation>
+    </message>
+    <message>
+        <source>Detail</source>
+        <translation>详细信息</translation>
+    </message>
+    <message>
+        <source>No Mock snapshot</source>
+        <translation>无 Mock 快照</translation>
+    </message>
+    <message>
+        <source>Start Mock Diagnostics to generate local synthetic data.</source>
+        <translation>启动 Mock 诊断以生成本地合成数据。</translation>
+    </message>
+    <message>
+        <source>MOCK master item</source>
+        <translation>MOCK 主站条目</translation>
+    </message>
+    <message>
+        <source>Value</source>
+        <translation>值</translation>
+    </message>
+    <message>
+        <source>Run mode</source>
+        <translation>运行模式</translation>
+    </message>
+    <message>
+        <source>Local only</source>
+        <translation>仅限本地</translation>
+    </message>
+    <message>
+        <source>ESM</source>
+        <translation>ESM</translation>
+    </message>
+    <message>
+        <source>MOCK error</source>
+        <translation>MOCK 错误</translation>
+    </message>
+    <message>
+        <source>MOCK healthy</source>
+        <translation>MOCK 正常</translation>
+    </message>
+    <message>
+        <source>AL Status</source>
+        <translation>AL 状态</translation>
+    </message>
+    <message>
+        <source>Working Counter</source>
+        <translation>工作计数器</translation>
+    </message>
+    <message>
+        <source>%1 / %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>Configured slaves</source>
+        <translation>已配置从站</translation>
+    </message>
+    <message>
+        <source>Active alarms</source>
+        <translation>活动告警</translation>
+    </message>
+    <message>
+        <source>%1 unacknowledged</source>
+        <translation>%1 个未确认</translation>
+    </message>
+    <message>
+        <source>Source samples</source>
+        <translation>数据源样本</translation>
+    </message>
+    <message>
+        <source>%1 coalesced before UI publication</source>
+        <translation>UI 发布前已合并 %1 个</translation>
+    </message>
+    <message>
+        <source>Captured</source>
+        <translation>已捕获</translation>
+    </message>
+    <message>
+        <source>MOCK timestamp</source>
+        <translation>MOCK 时间戳</translation>
+    </message>
+    <message>
+        <source>Position</source>
+        <translation>位置</translation>
+    </message>
+    <message>
+        <source>Slave</source>
+        <translation>从站</translation>
+    </message>
+    <message>
+        <source>WcState</source>
+        <translation>WcState</translation>
+    </message>
+    <message>
+        <source>Link</source>
+        <translation>链路</translation>
+    </message>
+    <message>
+        <source>DC</source>
+        <translation>DC</translation>
+    </message>
+    <message>
+        <source> + MOCK error</source>
+        <translation> + MOCK 错误</translation>
+    </message>
+    <message>
+        <source>No configured Mock slaves</source>
+        <translation>未配置 Mock 从站</translation>
+    </message>
+    <message>
+        <source>MOCK online item</source>
+        <translation>MOCK 在线条目</translation>
+    </message>
+    <message>
+        <source>Selected slave</source>
+        <translation>已选从站</translation>
+    </message>
+    <message>
+        <source>Not in Mock snapshot</source>
+        <translation>不在 Mock 快照中</translation>
+    </message>
+    <message>
+        <source>Check the offline configuration.</source>
+        <translation>请检查离线配置。</translation>
+    </message>
+    <message>
+        <source>DC offset</source>
+        <translation>DC 偏移</translation>
+    </message>
+    <message>
+        <source>ns</source>
+        <translation>ns</translation>
+    </message>
+    <message>
+        <source>Lost Frames</source>
+        <translation>丢失帧</translation>
+    </message>
+    <message>
+        <source>MOCK counter</source>
+        <translation>MOCK 计数器</translation>
+    </message>
+    <message>
+        <source>Port %1</source>
+        <translation>端口 %1</translation>
+    </message>
+    <message>
+        <source>%1 interruption(s)</source>
+        <translation>%1 次中断</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>范围</translation>
+    </message>
+    <message>
+        <source>Expected</source>
+        <translation>预期值</translation>
+    </message>
+    <message>
+        <source>Actual</source>
+        <translation>实际值</translation>
+    </message>
+    <message>
+        <source>Mismatch samples</source>
+        <translation>不匹配样本</translation>
+    </message>
+    <message>
+        <source>Master</source>
+        <translation>主站</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>状态</translation>
+    </message>
+    <message>
+        <source>Offset (ns)</source>
+        <translation>偏移 (ns)</translation>
+    </message>
+    <message>
+        <source>Deviation (ns)</source>
+        <translation>偏差 (ns)</translation>
+    </message>
+    <message>
+        <source>Max abs offset (ns)</source>
+        <translation>最大绝对偏移 (ns)</translation>
+    </message>
+    <message>
+        <source>Lost sync</source>
+        <translation>同步丢失</translation>
+    </message>
+    <message>
+        <source>Port</source>
+        <translation>端口</translation>
+    </message>
+    <message>
+        <source>Communication</source>
+        <translation>通信</translation>
+    </message>
+    <message>
+        <source>Interruptions</source>
+        <translation>中断次数</translation>
+    </message>
+    <message>
+        <source>Invalid frames</source>
+        <translation>无效帧</translation>
+    </message>
+    <message>
+        <source>Receive errors</source>
+        <translation>接收错误</translation>
+    </message>
+    <message>
+        <source>Established</source>
+        <translation>已建立</translation>
+    </message>
+    <message>
+        <source>Not established</source>
+        <translation>未建立</translation>
+    </message>
+    <message>
+        <source>CRC</source>
+        <translation>CRC</translation>
+    </message>
+    <message>
+        <source>Timeout</source>
+        <translation>超时</translation>
+    </message>
+    <message>
+        <source>Drop</source>
+        <translation>丢弃</translation>
+    </message>
+    <message>
+        <source>Late</source>
+        <translation>延迟</translation>
+    </message>
+    <message>
+        <source>Overflow</source>
+        <translation>溢出</translation>
+    </message>
+    <message>
+        <source>Time</source>
+        <translation>时间</translation>
+    </message>
+    <message>
+        <source>Severity</source>
+        <translation>严重程度</translation>
+    </message>
+    <message>
+        <source>Lifecycle</source>
+        <translation>生命周期</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>代码</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>节点</translation>
+    </message>
+    <message>
+        <source>Summary</source>
+        <translation>摘要</translation>
+    </message>
+    <message>
+        <source>Repeat</source>
+        <translation>重复次数</translation>
+    </message>
+    <message>
+        <source>No Mock events</source>
+        <translation>无 Mock 事件</translation>
+    </message>
+    <message>
+        <source>Metric</source>
+        <translation>指标</translation>
+    </message>
+    <message>
+        <source>Unit / detail</source>
+        <translation>单位 / 详情</translation>
+    </message>
+    <message>
+        <source>Nominal cycle</source>
+        <translation>标称周期</translation>
+    </message>
+    <message>
+        <source>Last cycle</source>
+        <translation>最近周期</translation>
+    </message>
+    <message>
+        <source>Minimum cycle</source>
+        <translation>最小周期</translation>
+    </message>
+    <message>
+        <source>Maximum cycle</source>
+        <translation>最大周期</translation>
+    </message>
+    <message>
+        <source>Jitter</source>
+        <translation>抖动</translation>
+    </message>
+    <message>
+        <source>Deadline margin</source>
+        <translation>截止时间余量</translation>
+    </message>
+    <message>
+        <source>Sample count</source>
+        <translation>样本数</translation>
+    </message>
+    <message>
+        <source>source samples</source>
+        <translation>数据源样本</translation>
+    </message>
+    <message>
+        <source>Missed deadlines</source>
+        <translation>错过截止时间次数</translation>
+    </message>
+    <message>
+        <source>Dropped trend samples</source>
+        <translation>已丢弃的趋势样本</translation>
+    </message>
+    <message>
+        <source>oldest-first bounded eviction</source>
+        <translation>有界容量，优先淘汰最旧数据</translation>
+    </message>
+    <message>
+        <source>Mock diagnostic pages</source>
+        <translation>Mock 诊断页面</translation>
+    </message>
+    <message>
+        <source>Mock Online</source>
+        <translation>Mock 在线</translation>
+    </message>
+    <message>
+        <source>Master Overview</source>
+        <translation>主站概览</translation>
+    </message>
+    <message>
+        <source>Slave States</source>
+        <translation>从站状态</translation>
+    </message>
+    <message>
+        <source>WKC / WcState</source>
+        <translation>WKC / WcState</translation>
+    </message>
+    <message>
+        <source>DC Sync</source>
+        <translation>DC 同步</translation>
+    </message>
+    <message>
+        <source>Link / Ports</source>
+        <translation>链路 / 端口</translation>
+    </message>
+    <message>
+        <source>Frame / Errors</source>
+        <translation>帧 / 错误</translation>
+    </message>
+    <message>
+        <source>Events / Alarms</source>
+        <translation>事件 / 告警</translation>
+    </message>
+    <message>
+        <source>Cycle / Performance</source>
+        <translation>周期 / 性能</translation>
+    </message>
+    <message>
+        <source>Start Mock Diagnostics</source>
+        <translation>启动 Mock 诊断</translation>
+    </message>
+    <message>
+        <source>Stop Mock Diagnostics</source>
+        <translation>停止 Mock 诊断</translation>
+    </message>
+    <message>
+        <source>Acknowledge Selected Mock Alarm</source>
+        <translation>确认所选 Mock 告警</translation>
+    </message>
+    <message>
+        <source>Clear Recovered Mock Events</source>
+        <translation>清除已恢复的 Mock 事件</translation>
+    </message>
+    <message>
+        <source>The local Mock diagnostics provider is unavailable.</source>
+        <translation>本地 Mock 诊断提供程序不可用。</translation>
+    </message>
+    <message>
+        <source>[EtherCAT Mock Diagnostics] Local simulation started; no controller or network was accessed.</source>
+        <translation>[EtherCAT Mock 诊断] 本地模拟已启动；未访问控制器或网络。</translation>
+    </message>
+    <message>
+        <source>No active Mock alarm is available.</source>
+        <translation>没有可用的活动 Mock 告警。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project service is unavailable.</source>
+        <translation>EtherCAT 项目服务不可用。</translation>
+    </message>
+    <message>
+        <source>The selected project has no EtherCAT master.</source>
+        <translation>所选项目没有 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Select an open EtherCAT project, master, slave, or Diagnostics node.</source>
+        <translation>请选择已打开的 EtherCAT 项目、主站、从站或诊断节点。</translation>
+    </message>
+    <message>
+        <source>Mock EtherCAT diagnostics failed</source>
+        <translation>Mock EtherCAT 诊断失败</translation>
+    </message>
+    <message>
+        <source>Mock EtherCAT diagnostics changing state</source>
+        <translation>Mock EtherCAT 诊断正在切换状态</translation>
+    </message>
+    <message>
+        <source>Local simulation only</source>
+        <translation>仅限本地模拟</translation>
+    </message>
+    <message>
+        <source>Mock EtherCAT diagnostics warning</source>
+        <translation>Mock EtherCAT 诊断警告</translation>
+    </message>
+    <message>
+        <source>Mock EtherCAT diagnostics running</source>
+        <translation>Mock EtherCAT 诊断正在运行</translation>
+    </message>
+    <message>
+        <source>MOCK mode %1, WKC %2/%3</source>
+        <translation>MOCK 模式 %1，WKC %2/%3</translation>
+    </message>
+    <message>
+        <source>[EtherCAT Mock Diagnostics] %1</source>
+        <translation>[EtherCAT Mock 诊断] %1</translation>
+    </message>
+    <message>
+        <source>Local Mock EtherCAT diagnostics</source>
+        <translation>本地 Mock EtherCAT 诊断</translation>
+    </message>
+    <message>
+        <source>A local Mock diagnostics session is already active.</source>
+        <translation>本地 Mock 诊断会话已处于活动状态。</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT project or master before monitoring.</source>
+        <translation>监控前请选择 EtherCAT 项目或主站。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project is not open.</source>
+        <translation>所选 EtherCAT 项目未打开。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT master no longer exists.</source>
+        <translation>所选 EtherCAT 主站已不存在。</translation>
+    </message>
+    <message>
+        <source>Start local Mock diagnostics before changing its run mode.</source>
+        <translation>更改运行模式前，请先启动本地 Mock 诊断。</translation>
+    </message>
+    <message>
+        <source>Use Stop Mock Monitoring to return to Offline mode.</source>
+        <translation>使用“停止 Mock 诊断”返回离线模式。</translation>
+    </message>
+    <message>
+        <source>MOCK run mode changed</source>
+        <translation>MOCK 运行模式已更改</translation>
+    </message>
+    <message>
+        <source>Local simulation entered mode %1; no controller command was sent.</source>
+        <translation>本地模拟已进入模式 %1；未发送控制器命令。</translation>
+    </message>
+    <message>
+        <source>The selected active Mock alarm was not found.</source>
+        <translation>未找到所选活动 Mock 告警。</translation>
+    </message>
+    <message>
+        <source>The monitored EtherCAT project was closed during Mock diagnostics.</source>
+        <translation>监控的 EtherCAT 项目在 Mock 诊断期间被关闭。</translation>
+    </message>
+    <message>
+        <source>MOCK working counter mismatch</source>
+        <translation>MOCK 工作计数器不匹配</translation>
+    </message>
+    <message>
+        <source>Expected %1, actual %2; local simulation only.</source>
+        <translation>预期值为 %1，实际值为 %2；仅限本地模拟。</translation>
+    </message>
+    <message>
+        <source>MOCK link interruption</source>
+        <translation>MOCK 链路中断</translation>
+    </message>
+    <message>
+        <source>Simulated port 0 link down; no physical link was sampled.</source>
+        <translation>模拟端口 0 链路断开；未采样物理链路。</translation>
+    </message>
+    <message>
+        <source>MOCK DC synchronization lost</source>
+        <translation>MOCK DC 同步丢失</translation>
+    </message>
+    <message>
+        <source>Simulated DC offset is %1 ns.</source>
+        <translation>模拟 DC 偏移为 %1 ns。</translation>
+    </message>
+    <message>
+        <source>MOCK cycle deadline missed</source>
+        <translation>MOCK 周期超期</translation>
+    </message>
+    <message>
+        <source>Simulated deadline margin is %1 ns.</source>
+        <translation>模拟截止时间余量为 %1 ns。</translation>
+    </message>
+    <message>
+        <source>MOCK frame errors detected</source>
+        <translation>检测到 MOCK 帧错误</translation>
+    </message>
+    <message>
+        <source>Simulated frame counters changed; no EtherCAT frame was received.</source>
+        <translation>模拟帧计数器已变化；未接收到 EtherCAT 帧。</translation>
+    </message>
+    <message>
+        <source>MOCK simulated error; not a hardware AL Status</source>
+        <translation>MOCK 模拟错误；不是硬件 AL 状态</translation>
+    </message>
+    <message>
+        <source>MOCK no simulated AL error</source>
+        <translation>MOCK 无模拟 AL 错误</translation>
+    </message>
+    <message>
+        <source>MOCK simulated slave error</source>
+        <translation>MOCK 模拟从站错误</translation>
+    </message>
+    <message>
+        <source>MOCK generated alarm burst</source>
+        <translation>MOCK 生成的告警突发</translation>
+    </message>
+    <message>
+        <source>Synthetic alarm for bounded-history verification.</source>
+        <translation>用于验证有界历史记录的合成告警。</translation>
+    </message>
+    <message>
+        <source>MOCK diagnostics source failure; no hardware was accessed.</source>
+        <translation>MOCK 诊断数据源故障；未访问任何硬件。</translation>
+    </message>
+</context>
+<context>
+    <name>QtC::EtherCATProject</name>
+    <message>
+        <source>Could not save EtherCAT project during close: %1</source>
+        <translation>关闭时无法保存 EtherCAT 项目：%1</translation>
+    </message>
+    <message>
+        <source>Cannot load EtherCAT project: %1</source>
+        <translation>无法加载 EtherCAT 项目：%1</translation>
+    </message>
+    <message>
+        <source>Rename EtherCAT project</source>
+        <translation>重命名 EtherCAT 项目</translation>
+    </message>
+    <message>
+        <source>Rename EtherCAT configuration node</source>
+        <translation>重命名 EtherCAT 配置节点</translation>
+    </message>
+    <message>
+        <source>Replace offline EtherCAT slaves</source>
+        <translation>替换离线 EtherCAT 从站</translation>
+    </message>
+    <message>
+        <source>%1 has an invalid stable ID.</source>
+        <translation>%1 的稳定 ID 无效。</translation>
+    </message>
+    <message>
+        <source>%1 reuses a stable ID that is already present in the project.</source>
+        <translation>%1 重复使用了项目中已有的稳定 ID。</translation>
+    </message>
+    <message>
+        <source>Sync Manager index and byte-size limit must be non-negative.</source>
+        <translation>同步管理器索引和字节大小限制不得为负数。</translation>
+    </message>
+    <message>
+        <source>PDO entry offsets must fit the exact JSON integer range.</source>
+        <translation>PDO 条目偏移必须在 JSON 精确整数范围内。</translation>
+    </message>
+    <message>
+        <source>Process Data for &apos;%1&apos; is invalid: %2</source>
+        <translation>“%1”的过程数据无效：%2</translation>
+    </message>
+    <message>
+        <source>Startup for &apos;%1&apos; is invalid: %2</source>
+        <translation>“%1”的启动配置无效：%2</translation>
+    </message>
+    <message>
+        <source>DC for &apos;%1&apos; is invalid: %2</source>
+        <translation>“%1”的 DC 配置无效：%2</translation>
+    </message>
+    <message>
+        <source>Sync Manager</source>
+        <translation>同步管理器</translation>
+    </message>
+    <message>
+        <source>PDO</source>
+        <translation>PDO</translation>
+    </message>
+    <message>
+        <source>PDO entry</source>
+        <translation>PDO 条目</translation>
+    </message>
+    <message>
+        <source>Startup parameter</source>
+        <translation>启动参数</translation>
+    </message>
+    <message>
+        <source>The project ID changed while the EtherCAT project was open.</source>
+        <translation>EtherCAT 项目打开期间，项目 ID 发生了变化。</translation>
+    </message>
+    <message>
+        <source>Cannot edit an invalid EtherCAT project.</source>
+        <translation>无法编辑无效的 EtherCAT 项目。</translation>
+    </message>
+    <message>
+        <source>Cannot capture an invalid EtherCAT project.</source>
+        <translation>无法捕获无效的 EtherCAT 项目。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project could not produce valid activation tokens.</source>
+        <translation>EtherCAT 项目无法生成有效的激活令牌。</translation>
+    </message>
+    <message>
+        <source>The activation project tokens are invalid.</source>
+        <translation>激活工程令牌无效。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project produced an invalid activation commit.</source>
+        <translation>EtherCAT 项目生成了无效的激活提交结果。</translation>
+    </message>
+    <message>
+        <source>Project name cannot be empty.</source>
+        <translation>项目名称不能为空。</translation>
+    </message>
+    <message>
+        <source>The requested EtherCAT project node does not exist.</source>
+        <translation>请求的 EtherCAT 项目节点不存在。</translation>
+    </message>
+    <message>
+        <source>Only EtherCAT target and master nodes can be renamed by this command.</source>
+        <translation>此命令只能重命名 EtherCAT 目标和主站节点。</translation>
+    </message>
+    <message>
+        <source>EtherCAT target and master names cannot be empty.</source>
+        <translation>EtherCAT 目标和主站名称不能为空。</translation>
+    </message>
+    <message>
+        <source>The requested EtherCAT master does not exist.</source>
+        <translation>请求的 EtherCAT 主站不存在。</translation>
+    </message>
+    <message>
+        <source>An offline slave has an invalid node ID.</source>
+        <translation>某个离线从站的节点 ID 无效。</translation>
+    </message>
+    <message>
+        <source>An offline slave belongs to a different EtherCAT master.</source>
+        <translation>某个离线从站属于其他 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Offline slave node IDs must be unique.</source>
+        <translation>离线从站节点 ID 必须唯一。</translation>
+    </message>
+    <message>
+        <source>Offline slave positions must be unique and valid.</source>
+        <translation>离线从站位置必须唯一且有效。</translation>
+    </message>
+    <message>
+        <source>Non-zero EtherCAT station addresses must be unique per master.</source>
+        <translation>同一主站下的非零 EtherCAT 站地址必须唯一。</translation>
+    </message>
+    <message>
+        <source>Offline slave names cannot be empty.</source>
+        <translation>离线从站名称不能为空。</translation>
+    </message>
+    <message>
+        <source>Offline slaves require non-zero Vendor ID and Product Code values.</source>
+        <translation>离线从站的厂商 ID 和产品代码必须为非零值。</translation>
+    </message>
+    <message>
+        <source>The requested offline slave does not exist.</source>
+        <translation>请求的离线从站不存在。</translation>
+    </message>
+    <message>
+        <source>Configure EtherCAT Process Data</source>
+        <translation>配置 EtherCAT 过程数据</translation>
+    </message>
+    <message>
+        <source>Configure EtherCAT Startup</source>
+        <translation>配置 EtherCAT 启动参数</translation>
+    </message>
+    <message>
+        <source>Configure EtherCAT Distributed Clocks</source>
+        <translation>配置 EtherCAT 分布式时钟</translation>
+    </message>
+    <message>
+        <source>Cannot save an invalid EtherCAT project.</source>
+        <translation>无法保存无效的 EtherCAT 项目。</translation>
+    </message>
+    <message>
+        <source>No EtherCAT project file path was specified.</source>
+        <translation>未指定 EtherCAT 项目文件路径。</translation>
+    </message>
+    <message>
+        <source>Save As is not supported for an open EtherCAT project.</source>
+        <translation>已打开的 EtherCAT 项目不支持“另存为”。</translation>
+    </message>
+    <message>
+        <source>Could not create migration backup &apos;%1&apos;: %2</source>
+        <translation>无法创建迁移备份“%1”：%2</translation>
+    </message>
+    <message>
+        <source>%1 has an invalid or missing &apos;%2&apos; value.</source>
+        <translation>%1 的“%2”值无效或缺失。</translation>
+    </message>
+    <message>
+        <source>%1 has an empty or missing name.</source>
+        <translation>%1 的名称为空或缺失。</translation>
+    </message>
+    <message>
+        <source>%1 has an out-of-range &apos;%2&apos; value.</source>
+        <translation>%1 的“%2”值超出范围。</translation>
+    </message>
+    <message>
+        <source>%1 has an invalid or missing &apos;%2&apos; array.</source>
+        <translation>%1 的“%2”数组无效或缺失。</translation>
+    </message>
+    <message>
+        <source>%1 has an invalid or missing &apos;%2&apos; object.</source>
+        <translation>%1 的“%2”对象无效或缺失。</translation>
+    </message>
+    <message>
+        <source>%1 has an unsupported data type &apos;%2&apos;.</source>
+        <translation>%1 使用了不支持的数据类型“%2”。</translation>
+    </message>
+    <message>
+        <source>%1 has an unsupported Sync Manager direction &apos;%2&apos;.</source>
+        <translation>%1 使用了不支持的同步管理器方向“%2”。</translation>
+    </message>
+    <message>
+        <source>%1 has an unsupported PDO direction &apos;%2&apos;.</source>
+        <translation>%1 使用了不支持的 PDO 方向“%2”。</translation>
+    </message>
+    <message>
+        <source>Sync Manager %1 for &apos;%2&apos; must be a JSON object.</source>
+        <translation>“%2”的同步管理器 %1 必须是 JSON 对象。</translation>
+    </message>
+    <message>
+        <source>Sync Manager %1 for &apos;%2&apos;</source>
+        <translation>“%2”的同步管理器 %1</translation>
+    </message>
+    <message>
+        <source>PDO entry %1 in %2 must be a JSON object.</source>
+        <translation>%2 中的 PDO 条目 %1 必须是 JSON 对象。</translation>
+    </message>
+    <message>
+        <source>PDO entry %1 in %2</source>
+        <translation>%2 中的 PDO 条目 %1</translation>
+    </message>
+    <message>
+        <source>PDO %1 for &apos;%2&apos; must be a JSON object.</source>
+        <translation>“%2”的 PDO %1 必须是 JSON 对象。</translation>
+    </message>
+    <message>
+        <source>PDO %1 for &apos;%2&apos;</source>
+        <translation>“%2”的 PDO %1</translation>
+    </message>
+    <message>
+        <source>Startup parameter %1 for &apos;%2&apos; must be a JSON object.</source>
+        <translation>“%2”的启动参数 %1 必须是 JSON 对象。</translation>
+    </message>
+    <message>
+        <source>Startup parameter %1 for &apos;%2&apos;</source>
+        <translation>“%2”的启动参数 %1</translation>
+    </message>
+    <message>
+        <source>%1 has an invalid hexadecimal raw value.</source>
+        <translation>%1 的十六进制原始值无效。</translation>
+    </message>
+    <message>
+        <source> for &apos;%1&apos;</source>
+        <translation> 所属从站为“%1”</translation>
+    </message>
+    <message>
+        <source>Master &apos;slaves&apos; must be a JSON array.</source>
+        <translation>主站的“slaves”必须是 JSON 数组。</translation>
+    </message>
+    <message>
+        <source>Offline slave %1 must be a JSON object.</source>
+        <translation>离线从站 %1 必须是 JSON 对象。</translation>
+    </message>
+    <message>
+        <source>Offline slave %1</source>
+        <translation>离线从站 %1</translation>
+    </message>
+    <message>
+        <source>EtherCAT project node IDs must be unique.</source>
+        <translation>EtherCAT 项目节点 ID 必须唯一。</translation>
+    </message>
+    <message>
+        <source>Offline slave positions must be unique.</source>
+        <translation>离线从站位置必须唯一。</translation>
+    </message>
+    <message>
+        <source>Non-zero EtherCAT station addresses must be unique.</source>
+        <translation>非零 EtherCAT 站地址必须唯一。</translation>
+    </message>
+    <message>
+        <source>%1 requires non-zero Vendor ID and Product Code values.</source>
+        <translation>%1 的厂商 ID 和产品代码必须为非零值。</translation>
+    </message>
+    <message>
+        <source>%1 has an invalid device description ID.</source>
+        <translation>%1 的设备描述 ID 无效。</translation>
+    </message>
+    <message>
+        <source>EtherCAT Project</source>
+        <translation>EtherCAT 项目</translation>
+    </message>
+    <message>
+        <source>Target Controller</source>
+        <translation>目标控制器</translation>
+    </message>
+    <message>
+        <source>EtherCAT Master</source>
+        <translation>EtherCAT 主站</translation>
+    </message>
+    <message>
+        <source>Version 0 project has an invalid project ID.</source>
+        <translation>版本 0 项目的项目 ID 无效。</translation>
+    </message>
+    <message>
+        <source>Invalid JSON at offset %1: %2</source>
+        <translation>偏移 %1 处的 JSON 无效：%2</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project root must be a JSON object.</source>
+        <translation>EtherCAT 项目根节点必须是 JSON 对象。</translation>
+    </message>
+    <message>
+        <source>The file is not an EtherCAT project.</source>
+        <translation>该文件不是 EtherCAT 项目。</translation>
+    </message>
+    <message>
+        <source>Unsupported EtherCAT project format version %1.</source>
+        <translation>不支持 EtherCAT 项目格式版本 %1。</translation>
+    </message>
+    <message>
+        <source>Project</source>
+        <translation>项目</translation>
+    </message>
+    <message>
+        <source>Target</source>
+        <translation>目标</translation>
+    </message>
+    <message>
+        <source>Master</source>
+        <translation>主站</translation>
+    </message>
+    <message>
+        <source>Project, target, and master IDs must be unique.</source>
+        <translation>项目、目标和主站 ID 必须唯一。</translation>
+    </message>
+    <message>
+        <source>New EtherCAT Project</source>
+        <translation>新建 EtherCAT 项目</translation>
+    </message>
+    <message>
+        <source>Project Name and Location</source>
+        <translation>项目名称和位置</translation>
+    </message>
+    <message>
+        <source>Project name:</source>
+        <translation>项目名称：</translation>
+    </message>
+    <message>
+        <source>Location:</source>
+        <translation>位置：</translation>
+    </message>
+    <message>
+        <source>EtherCAT Engineering Project</source>
+        <translation>EtherCAT 工程项目</translation>
+    </message>
+    <message>
+        <source>Creates an offline EtherCAT engineering project for %1.</source>
+        <translation>为 %1 创建离线 EtherCAT 工程项目。</translation>
+    </message>
+    <message>
+        <source>EtherCAT</source>
+        <translation>EtherCAT</translation>
+    </message>
+    <message>
+        <source>EtherCAT projects</source>
+        <translation>EtherCAT 项目</translation>
+    </message>
+    <message>
+        <source>Project service thread error.</source>
+        <translation>项目服务线程错误。</translation>
+    </message>
+    <message>
+        <source>The requested EtherCAT project is not open.</source>
+        <translation>请求的 EtherCAT 项目未打开。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project has no change to undo.</source>
+        <translation>EtherCAT 项目没有可撤销的更改。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project has no change to redo.</source>
+        <translation>EtherCAT 项目没有可重做的更改。</translation>
+    </message>
+    <message>
+        <source>Another open EtherCAT project has the same project ID.</source>
+        <translation>另一个已打开的 EtherCAT 项目具有相同的项目 ID。</translation>
+    </message>
+</context>
+<context>
+    <name>QtC::EtherCATScan</name>
+    <message>
+        <source>Local Mock EtherCAT scanner</source>
+        <translation>本地 Mock EtherCAT 扫描器</translation>
+    </message>
+    <message>
+        <source>The local Mock scanner is unavailable.</source>
+        <translation>本地 Mock 扫描器不可用。</translation>
+    </message>
+    <message>
+        <source>Clear the previous Mock scan before starting again.</source>
+        <translation>再次启动前，请先清除上一次 Mock 扫描。</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT project or master before scanning.</source>
+        <translation>扫描前请选择 EtherCAT 项目或主站。</translation>
+    </message>
+    <message>
+        <source>Select a configured branch before rescanning it.</source>
+        <translation>重新扫描前请选择已配置的分支。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project is no longer open.</source>
+        <translation>所选 EtherCAT 项目已不再打开。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT master no longer exists.</source>
+        <translation>所选 EtherCAT 主站已不存在。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT branch no longer exists under this master.</source>
+        <translation>所选 EtherCAT 分支已不在此主站下。</translation>
+    </message>
+    <message>
+        <source>Preparing local Mock scan</source>
+        <translation>正在准备本地 Mock 扫描</translation>
+    </message>
+    <message>
+        <source>Local Mock scan cancelled</source>
+        <translation>本地 Mock 扫描已取消</translation>
+    </message>
+    <message>
+        <source>No completed Mock topology is available to compare.</source>
+        <translation>没有可供比较的已完成 Mock 拓扑。</translation>
+    </message>
+    <message>
+        <source>A Mock interface scan has no slave topology to compare.</source>
+        <translation>Mock 接口扫描没有可供比较的从站拓扑。</translation>
+    </message>
+    <message>
+        <source>The scanned EtherCAT project is no longer open.</source>
+        <translation>被扫描的 EtherCAT 项目已不再打开。</translation>
+    </message>
+    <message>
+        <source>Scanning Mock master interface</source>
+        <translation>正在扫描 Mock 主站接口</translation>
+    </message>
+    <message>
+        <source>Building Mock interface snapshot</source>
+        <translation>正在构建 Mock 接口快照</translation>
+    </message>
+    <message>
+        <source>Scanning Mock EtherCAT slaves</source>
+        <translation>正在扫描 Mock EtherCAT 从站</translation>
+    </message>
+    <message>
+        <source>Mock interface scan completed</source>
+        <translation>Mock 接口扫描已完成</translation>
+    </message>
+    <message>
+        <source>Comparing Mock topology with the offline project</source>
+        <translation>正在比较 Mock 拓扑与离线项目</translation>
+    </message>
+    <message>
+        <source>MOCK partial failure after discovering two slaves.</source>
+        <translation>发现两个从站后发生 MOCK 部分故障。</translation>
+    </message>
+    <message>
+        <source>Discovered Mock slave %1 of %2</source>
+        <translation>已发现 Mock 从站 %1/%2</translation>
+    </message>
+    <message>
+        <source>Building immutable Mock topology snapshot</source>
+        <translation>正在构建不可变的 Mock 拓扑快照</translation>
+    </message>
+    <message>
+        <source>Mock EtherCAT Interface</source>
+        <translation>Mock EtherCAT 接口</translation>
+    </message>
+    <message>
+        <source>Local simulation; no network device is accessed</source>
+        <translation>本地模拟；未访问网络设备</translation>
+    </message>
+    <message>
+        <source>This result was generated by a non-default local Mock scenario.</source>
+        <translation>此结果由非默认的本地 Mock 场景生成。</translation>
+    </message>
+    <message>
+        <source>Mock scan completed</source>
+        <translation>Mock 扫描已完成</translation>
+    </message>
+    <message>
+        <source>Mock EtherCAT Slave %1</source>
+        <translation>Mock EtherCAT 从站 %1</translation>
+    </message>
+    <message>
+        <source>Mock %1</source>
+        <translation>Mock %1</translation>
+    </message>
+    <message>
+        <source>Mock duplicate of %1</source>
+        <translation>%1 的 Mock 重复项</translation>
+    </message>
+    <message>
+        <source>Idle</source>
+        <translation>空闲</translation>
+    </message>
+    <message>
+        <source>Preparing</source>
+        <translation>准备中</translation>
+    </message>
+    <message>
+        <source>Scanning Master</source>
+        <translation>正在扫描主站</translation>
+    </message>
+    <message>
+        <source>Scanning Slaves</source>
+        <translation>正在扫描从站</translation>
+    </message>
+    <message>
+        <source>Building Snapshot</source>
+        <translation>正在构建快照</translation>
+    </message>
+    <message>
+        <source>Comparing</source>
+        <translation>正在比较</translation>
+    </message>
+    <message>
+        <source>Completed</source>
+        <translation>已完成</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>已取消</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>失败</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>未知</translation>
+    </message>
+    <message>
+        <source>Normal Mock topology</source>
+        <translation>正常 Mock 拓扑</translation>
+    </message>
+    <message>
+        <source>Slow Mock scan</source>
+        <translation>慢速 Mock 扫描</translation>
+    </message>
+    <message>
+        <source>Partial Mock failure</source>
+        <translation>Mock 部分故障</translation>
+    </message>
+    <message>
+        <source>Duplicate Mock device</source>
+        <translation>重复的 Mock 设备</translation>
+    </message>
+    <message>
+        <source>Mock revision mismatch</source>
+        <translation>Mock 修订版本不匹配</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>新增</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>缺失</translation>
+    </message>
+    <message>
+        <source>Position</source>
+        <translation>位置</translation>
+    </message>
+    <message>
+        <source>Vendor</source>
+        <translation>厂商</translation>
+    </message>
+    <message>
+        <source>Product</source>
+        <translation>产品</translation>
+    </message>
+    <message>
+        <source>Revision</source>
+        <translation>修订版本</translation>
+    </message>
+    <message>
+        <source>Serial Number</source>
+        <translation>序列号</translation>
+    </message>
+    <message>
+        <source>Alias</source>
+        <translation>别名</translation>
+    </message>
+    <message>
+        <source>Duplicate</source>
+        <translation>重复</translation>
+    </message>
+    <message>
+        <source>PDO</source>
+        <translation>PDO</translation>
+    </message>
+    <message>
+        <source>DC</source>
+        <translation>DC</translation>
+    </message>
+    <message>
+        <source>Information</source>
+        <translation>信息</translation>
+    </message>
+    <message>
+        <source>Warning</source>
+        <translation>警告</translation>
+    </message>
+    <message>
+        <source>Blocking</source>
+        <translation>阻塞</translation>
+    </message>
+    <message>
+        <source>MOCK SCAN - local simulation only; no network or controller is accessed.</source>
+        <translation>MOCK 扫描 - 仅限本地模拟；未访问网络或控制器。</translation>
+    </message>
+    <message>
+        <source>Severity</source>
+        <translation>严重程度</translation>
+    </message>
+    <message>
+        <source>Change</source>
+        <translation>变更</translation>
+    </message>
+    <message>
+        <source>Offline</source>
+        <translation>离线</translation>
+    </message>
+    <message>
+        <source>Scanned</source>
+        <translation>扫描值</translation>
+    </message>
+    <message>
+        <source>Detail</source>
+        <translation>详细信息</translation>
+    </message>
+    <message>
+        <source>Mock scenario:</source>
+        <translation>Mock 场景：</translation>
+    </message>
+    <message>
+        <source>MOCK state: %1
+%2
+Discovered slaves: %3</source>
+        <translation>MOCK 状态：%1
+%2
+已发现从站：%3</translation>
+    </message>
+    <message>
+        <source>Mock failure</source>
+        <translation>Mock 故障</translation>
+    </message>
+    <message>
+        <source>Mock interface</source>
+        <translation>Mock 接口</translation>
+    </message>
+    <message>
+        <source>Mock scan pages</source>
+        <translation>Mock 扫描页面</translation>
+    </message>
+    <message>
+        <source>Mock Scan</source>
+        <translation>Mock 扫描</translation>
+    </message>
+    <message>
+        <source>Selected offline node: %1 (%2)</source>
+        <translation>已选离线节点：%1 (%2)</translation>
+    </message>
+    <message>
+        <source>Scan Mock Interfaces</source>
+        <translation>扫描 Mock 接口</translation>
+    </message>
+    <message>
+        <source>Scan Mock Slaves</source>
+        <translation>扫描 Mock 从站</translation>
+    </message>
+    <message>
+        <source>Rescan Selected Mock Branch</source>
+        <translation>重新扫描所选 Mock 分支</translation>
+    </message>
+    <message>
+        <source>Compare Mock Scan With Project</source>
+        <translation>将 Mock 扫描结果与项目比较</translation>
+    </message>
+    <message>
+        <source>Accept Mock Scan as Offline Configuration</source>
+        <translation>采用 Mock 扫描结果作为离线配置</translation>
+    </message>
+    <message>
+        <source>Keep Existing Offline Configuration</source>
+        <translation>保留现有离线配置</translation>
+    </message>
+    <message>
+        <source>Cancel Mock Scan</source>
+        <translation>取消 Mock 扫描</translation>
+    </message>
+    <message>
+        <source>The Mock scan workflow is unavailable.</source>
+        <translation>Mock 扫描工作流不可用。</translation>
+    </message>
+    <message>
+        <source>Only a complete local Mock scan can be accepted.</source>
+        <translation>只能接受完整的本地 Mock 扫描。</translation>
+    </message>
+    <message>
+        <source>A Mock interface scan cannot replace the offline slave topology.</source>
+        <translation>Mock 接口扫描无法替换离线从站拓扑。</translation>
+    </message>
+    <message>
+        <source>The Mock scan result is no longer available.</source>
+        <translation>Mock 扫描结果已不可用。</translation>
+    </message>
+    <message>
+        <source>Resolve blocking Mock topology differences before accepting the scan.</source>
+        <translation>接受扫描前，请先解决会阻止接受操作的 Mock 拓扑差异。</translation>
+    </message>
+    <message>
+        <source>[EtherCAT Mock Scan] Offline topology accepted. Save the project to persist it.</source>
+        <translation>[EtherCAT Mock 扫描] 已接受离线拓扑。请保存项目以持久化更改。</translation>
+    </message>
+    <message>
+        <source>[EtherCAT Mock Scan] Scan result discarded; offline topology was not changed.</source>
+        <translation>[EtherCAT Mock 扫描] 已丢弃扫描结果；离线拓扑未更改。</translation>
+    </message>
+    <message>
+        <source>EtherCAT selection or project service is unavailable.</source>
+        <translation>EtherCAT 选择服务或项目服务不可用。</translation>
+    </message>
+    <message>
+        <source>The selected project has no EtherCAT master.</source>
+        <translation>所选项目没有 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT master or configured slave to rescan its branch.</source>
+        <translation>请选择 EtherCAT 主站或已配置从站，以重新扫描其分支。</translation>
+    </message>
+    <message>
+        <source>Select an open EtherCAT project, master, or slave.</source>
+        <translation>请选择已打开的 EtherCAT 项目、主站或从站。</translation>
+    </message>
+    <message>
+        <source>A local Mock scan is already running.</source>
+        <translation>本地 Mock 扫描已在运行。</translation>
+    </message>
+    <message>
+        <source>[EtherCAT Mock Scan] Started local simulation; no network is accessed.</source>
+        <translation>[EtherCAT Mock 扫描] 本地模拟已启动；未访问网络。</translation>
+    </message>
+    <message>
+        <source>Mock EtherCAT scan failed</source>
+        <translation>Mock EtherCAT 扫描失败</translation>
+    </message>
+    <message>
+        <source>Mock EtherCAT scan completed</source>
+        <translation>Mock EtherCAT 扫描已完成</translation>
+    </message>
+    <message>
+        <source>Local simulation only</source>
+        <translation>仅限本地模拟</translation>
+    </message>
+    <message>
+        <source>Mock EtherCAT scan running</source>
+        <translation>Mock EtherCAT 扫描正在运行</translation>
+    </message>
+    <message>
+        <source>[EtherCAT Mock Scan] %1</source>
+        <translation>[EtherCAT Mock 扫描] %1</translation>
+    </message>
+    <message>
+        <source>Vendor mismatch</source>
+        <translation>厂商不匹配</translation>
+    </message>
+    <message>
+        <source>Offline 0x%1, scanned 0x%2</source>
+        <translation>离线值 0x%1，扫描值 0x%2</translation>
+    </message>
+    <message>
+        <source>Product mismatch</source>
+        <translation>产品不匹配</translation>
+    </message>
+    <message>
+        <source>Revision difference</source>
+        <translation>修订版本差异</translation>
+    </message>
+    <message>
+        <source>Serial Number difference</source>
+        <translation>序列号差异</translation>
+    </message>
+    <message>
+        <source>Offline %1, scanned %2</source>
+        <translation>离线值 %1，扫描值 %2</translation>
+    </message>
+    <message>
+        <source>Alias difference</source>
+        <translation>别名差异</translation>
+    </message>
+    <message>
+        <source>Duplicate scanned device</source>
+        <translation>重复的扫描设备</translation>
+    </message>
+    <message>
+        <source>The same Mock physical identity appears more than once.</source>
+        <translation>同一 Mock 物理标识出现了多次。</translation>
+    </message>
+    <message>
+        <source>Position changed</source>
+        <translation>位置已更改</translation>
+    </message>
+    <message>
+        <source>Missing slave</source>
+        <translation>缺失从站</translation>
+    </message>
+    <message>
+        <source>Added slave</source>
+        <translation>新增从站</translation>
+    </message>
+    <message>
+        <source>PDO comparison placeholder</source>
+        <translation>PDO 比较占位项</translation>
+    </message>
+    <message>
+        <source>PDO configuration is not compared in the Mock scan stage.</source>
+        <translation>Mock 扫描阶段不比较 PDO 配置。</translation>
+    </message>
+    <message>
+        <source>DC comparison placeholder</source>
+        <translation>DC 比较占位项</translation>
+    </message>
+    <message>
+        <source>DC configuration is not compared in the Mock scan stage.</source>
+        <translation>Mock 扫描阶段不比较 DC 配置。</translation>
+    </message>
+</context>
+<context>
+    <name>QtC::EtherCATWorkbench</name>
+    <message>
+        <source>Output</source>
+        <translation>输出</translation>
+    </message>
+    <message>
+        <source>Current project information</source>
+        <translation>当前工程信息</translation>
+    </message>
+    <message>
+        <source>Current project timing mode, cycle period, and configured device count.</source>
+        <translation>当前工程的时序模式、循环周期和已配置设备数量。</translation>
+    </message>
+    <message>
+        <source>Current project name</source>
+        <translation>当前工程名称</translation>
+    </message>
+    <message>
+        <source>Current project timing mode</source>
+        <translation>当前工程时序模式</translation>
+    </message>
+    <message>
+        <source>Current project cycle period</source>
+        <translation>当前工程循环周期</translation>
+    </message>
+    <message>
+        <source>Configured device count</source>
+        <translation>已配置设备数量</translation>
+    </message>
+    <message>
+        <source>Mode:</source>
+        <translation>模式：</translation>
+    </message>
+    <message>
+        <source>Cycle:</source>
+        <translation>周期：</translation>
+    </message>
+    <message>
+        <source>Devices:</source>
+        <translation>设备：</translation>
+    </message>
+    <message>
+        <source>%1 µs</source>
+        <translation>%1 µs</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n configured device(s)</source>
+        <translation>
+            <numerusform>已配置 %n 个设备</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Error</source>
+        <translation>错误</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n device(s)</source>
+        <translation>
+            <numerusform>%n 个设备</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cleanup canceled: adapter removed.</source>
+        <translation>清理已取消：适配器已移除。</translation>
+    </message>
+    <message>
+        <source>Start canceled: adapter removed.</source>
+        <translation>启动已取消：适配器已移除。</translation>
+    </message>
+    <message>
+        <source>Stop canceled: adapter removed.</source>
+        <translation>停止已取消：适配器已移除。</translation>
+    </message>
+    <message>
+        <source>Bus applied · %1 devices · %2 matched · %3 unknown</source>
+        <translation>总线已应用 · %1 个设备 · %2 个已匹配 · %3 个未知</translation>
+    </message>
+    <message numerus="yes">
+        <source> · %n ambiguous</source>
+        <translation>
+            <numerusform> · %n 个匹配不明确</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source> · %n unsupported</source>
+        <translation>
+            <numerusform> · %n 个不受支持</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>FreeRun unavailable: %1</source>
+        <translation>FreeRun 不可用：%1</translation>
+    </message>
+    <message>
+        <source>FreeRun unverified: %1</source>
+        <translation>FreeRun 未验证：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>FreeRun available · %n device(s)</source>
+        <translation>
+            <numerusform>FreeRun 可用 · %n 个设备</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Import matching ESI XML.</source>
+        <translation>请导入匹配的 ESI XML。</translation>
+    </message>
+    <message>
+        <source>Use Distributed Clocks.</source>
+        <translation>请使用分布式时钟。</translation>
+    </message>
+    <message>
+        <source>Start canceled: project closed.</source>
+        <translation>启动已取消：工程已关闭。</translation>
+    </message>
+    <message>
+        <source>Stop canceled: project closed.</source>
+        <translation>停止已取消：工程已关闭。</translation>
+    </message>
+    <message>
+        <source>Control acquisition failed: %1</source>
+        <translation>控制权获取失败：%1</translation>
+    </message>
+    <message>
+        <source>Scan failed: %1</source>
+        <translation>扫描失败：%1</translation>
+    </message>
+    <message>
+        <source>Starting · Restore → Run</source>
+        <translation>正在启动 · 恢复 → 运行</translation>
+    </message>
+    <message>
+        <source>Running · WKC %1/%2 · cycle %3</source>
+        <translation>正在运行 · WKC %1/%2 · 周期 %3</translation>
+    </message>
+    <message>
+        <source>Start failed: %1</source>
+        <translation>启动失败：%1</translation>
+    </message>
+    <message>
+        <source>Stopping · Controlled stop → Shutdown</source>
+        <translation>正在停止 · 受控停止 → 关停</translation>
+    </message>
+    <message>
+        <source>Stopping · Shutdown</source>
+        <translation>正在停止 · 关停</translation>
+    </message>
+    <message>
+        <source>Stopped · Shutdown · faults 0x%1/0x%2</source>
+        <translation>已停止 · 关停 · 故障 0x%1/0x%2</translation>
+    </message>
+    <message>
+        <source>Stopped · Shutdown · DC off</source>
+        <translation>已停止 · 关停 · DC 已关闭</translation>
+    </message>
+    <message>
+        <source>Stop unverified: %1 · cyclic traffic may still be active</source>
+        <translation>停止未确认：%1 · 周期通信可能仍在运行</translation>
+    </message>
+    <message>
+        <source>Cleanup failed: %1 · connection unchanged</source>
+        <translation>清理失败：%1 · 连接未变</translation>
+    </message>
+    <message>
+        <source>Valid</source>
+        <translation>有效</translation>
+    </message>
+    <message>
+        <source>Invalid</source>
+        <translation>无效</translation>
+    </message>
+    <message>
+        <source>Invalid: %1</source>
+        <translation>无效：%1</translation>
+    </message>
+    <message>
+        <source>Project main information</source>
+        <translation>项目主要信息</translation>
+    </message>
+    <message>
+        <source>Choose Target...</source>
+        <translation>选择目标...</translation>
+    </message>
+    <message>
+        <source>Version</source>
+        <translation>版本</translation>
+    </message>
+    <message>
+        <source>Pin Version</source>
+        <translation>固定版本</translation>
+    </message>
+    <message>
+        <source>Disabled</source>
+        <translation>已禁用</translation>
+    </message>
+    <message>
+        <source>Create symbols</source>
+        <translation>创建符号</translation>
+    </message>
+    <message>
+        <source>Offline configuration summary</source>
+        <translation>离线配置摘要</translation>
+    </message>
+    <message>
+        <source>General name edit feedback</source>
+        <translation>常规名称编辑反馈</translation>
+    </message>
+    <message>
+        <source>EtherCAT project name</source>
+        <translation>EtherCAT 项目名称</translation>
+    </message>
+    <message>
+        <source>EtherCAT project ID</source>
+        <translation>EtherCAT 项目 ID</translation>
+    </message>
+    <message>
+        <source>EtherCAT project type</source>
+        <translation>EtherCAT 项目类型</translation>
+    </message>
+    <message>
+        <source>EtherCAT project format version</source>
+        <translation>EtherCAT 项目格式版本</translation>
+    </message>
+    <message>
+        <source>EtherCAT project creation tool</source>
+        <translation>EtherCAT 项目创建工具</translation>
+    </message>
+    <message>
+        <source>EtherCAT project validity</source>
+        <translation>EtherCAT 项目有效性</translation>
+    </message>
+    <message>
+        <source>EtherCAT project migration state</source>
+        <translation>EtherCAT 项目迁移状态</translation>
+    </message>
+    <message>
+        <source>EtherCAT project modified state</source>
+        <translation>EtherCAT 项目修改状态</translation>
+    </message>
+    <message>
+        <source>Offline target name</source>
+        <translation>离线目标名称</translation>
+    </message>
+    <message>
+        <source>EtherCAT master name</source>
+        <translation>EtherCAT 主站名称</translation>
+    </message>
+    <message>
+        <source>Project EtherCAT timing mode</source>
+        <translation>项目 EtherCAT 运行模式</translation>
+    </message>
+    <message>
+        <source>Project EtherCAT cycle period</source>
+        <translation>项目 EtherCAT 循环周期</translation>
+    </message>
+    <message>
+        <source>Configured EtherCAT slave count</source>
+        <translation>已配置的 EtherCAT 从站数量</translation>
+    </message>
+    <message>
+        <source>Stable offline project identifier; this is not an ADS or runtime ID.</source>
+        <translation>稳定的离线项目标识符；此标识符不是 ADS ID 或运行时 ID。</translation>
+    </message>
+    <message>
+        <source>Local engineering project type; no PLC runtime is represented.</source>
+        <translation>本地工程项目类型；不表示任何 PLC 运行时。</translation>
+    </message>
+    <message>
+        <source>Project name:</source>
+        <translation>项目名称：</translation>
+    </message>
+    <message>
+        <source>Project ID:</source>
+        <translation>项目 ID：</translation>
+    </message>
+    <message>
+        <source>Project type:</source>
+        <translation>项目类型：</translation>
+    </message>
+    <message>
+        <source>Format version:</source>
+        <translation>格式版本：</translation>
+    </message>
+    <message>
+        <source>Created by:</source>
+        <translation>创建工具：</translation>
+    </message>
+    <message>
+        <source>Validity:</source>
+        <translation>有效性：</translation>
+    </message>
+    <message>
+        <source>Migration:</source>
+        <translation>迁移：</translation>
+    </message>
+    <message>
+        <source>Modified:</source>
+        <translation>已修改：</translation>
+    </message>
+    <message>
+        <source>Offline target:</source>
+        <translation>离线目标：</translation>
+    </message>
+    <message>
+        <source>EtherCAT master:</source>
+        <translation>EtherCAT 主站：</translation>
+    </message>
+    <message>
+        <source>Timing mode:</source>
+        <translation>运行模式：</translation>
+    </message>
+    <message>
+        <source>Cycle period (ns):</source>
+        <translation>循环周期（ns）：</translation>
+    </message>
+    <message>
+        <source>Configured slaves:</source>
+        <translation>已配置从站：</translation>
+    </message>
+    <message>
+        <source>EtherCAT device name</source>
+        <translation>EtherCAT 设备名称</translation>
+    </message>
+    <message>
+        <source>EtherCAT device ID</source>
+        <translation>EtherCAT 设备 ID</translation>
+    </message>
+    <message>
+        <source>EtherCAT object ID</source>
+        <translation>EtherCAT 对象 ID</translation>
+    </message>
+    <message>
+        <source>EtherCAT device type</source>
+        <translation>EtherCAT 设备类型</translation>
+    </message>
+    <message>
+        <source>One-based identifier derived from the offline physical order.</source>
+        <translation>根据离线物理顺序派生的从 1 开始的标识符。</translation>
+    </message>
+    <message>
+        <source>Stable project node identifier.</source>
+        <translation>稳定的项目节点标识符。</translation>
+    </message>
+    <message>
+        <source>Name:</source>
+        <translation>名称：</translation>
+    </message>
+    <message>
+        <source>Id:</source>
+        <translation>ID：</translation>
+    </message>
+    <message>
+        <source>Object Id:</source>
+        <translation>对象 ID：</translation>
+    </message>
+    <message>
+        <source>Type:</source>
+        <translation>类型：</translation>
+    </message>
+    <message>
+        <source>Offline target identity</source>
+        <translation>离线目标标识</translation>
+    </message>
+    <message>
+        <source>Offline target</source>
+        <translation>离线目标</translation>
+    </message>
+    <message>
+        <source>Choose target system</source>
+        <translation>选择目标系统</translation>
+    </message>
+    <message>
+        <source>Engineering version</source>
+        <translation>工程版本</translation>
+    </message>
+    <message>
+        <source>Target runtime version</source>
+        <translation>目标运行时版本</translation>
+    </message>
+    <message>
+        <source>Local runtime version</source>
+        <translation>本地运行时版本</translation>
+    </message>
+    <message>
+        <source>Project version</source>
+        <translation>项目版本</translation>
+    </message>
+    <message>
+        <source>Pin engineering version</source>
+        <translation>固定工程版本</translation>
+    </message>
+    <message>
+        <source>Target discovery and runtime selection are not available in the phase 1 local Mock.</source>
+        <translation>阶段 1 本地 Mock 中不提供目标发现和运行时选择。</translation>
+    </message>
+    <message>
+        <source>The phase 1 offline project does not persist or activate a target runtime version.</source>
+        <translation>阶段 1 离线项目不会持久化或激活目标运行时版本。</translation>
+    </message>
+    <message>
+        <source>Engineering</source>
+        <translation>工程环境</translation>
+    </message>
+    <message>
+        <source>Target</source>
+        <translation>目标</translation>
+    </message>
+    <message>
+        <source>Local</source>
+        <translation>本地</translation>
+    </message>
+    <message>
+        <source>Project</source>
+        <translation>项目</translation>
+    </message>
+    <message>
+        <source>EtherCAT master ID</source>
+        <translation>EtherCAT 主站 ID</translation>
+    </message>
+    <message>
+        <source>EtherCAT master object ID</source>
+        <translation>EtherCAT 主站对象 ID</translation>
+    </message>
+    <message>
+        <source>EtherCAT master type</source>
+        <translation>EtherCAT 主站类型</translation>
+    </message>
+    <message>
+        <source>EtherCAT master comment</source>
+        <translation>EtherCAT 主站注释</translation>
+    </message>
+    <message>
+        <source>Disable EtherCAT master</source>
+        <translation>禁用 EtherCAT 主站</translation>
+    </message>
+    <message>
+        <source>Create EtherCAT master symbols</source>
+        <translation>创建 EtherCAT 主站符号</translation>
+    </message>
+    <message>
+        <source>One-based identifier of this master in the project.</source>
+        <translation>此主站在项目中从 1 开始的标识符。</translation>
+    </message>
+    <message>
+        <source>The current offline project contract does not store this TwinCAT-style setting.</source>
+        <translation>当前离线项目契约不存储此 TwinCAT 风格设置。</translation>
+    </message>
+    <message>
+        <source>Not available in phase 1</source>
+        <translation>阶段 1 中不可用</translation>
+    </message>
+    <message>
+        <source>Comment:</source>
+        <translation>注释：</translation>
+    </message>
+    <message>
+        <source>EtherCAT master cycle time</source>
+        <translation>EtherCAT 主站周期时间</translation>
+    </message>
+    <message>
+        <source>EtherCAT master status summary</source>
+        <translation>EtherCAT 主站状态摘要</translation>
+    </message>
+    <message>
+        <source>Cycle time is assigned by a real-time task in a later configuration stage.</source>
+        <translation>周期时间将在后续配置阶段由实时任务分配。</translation>
+    </message>
+    <message>
+        <source>Summary from the shared Workbench scan and diagnostics presentation.</source>
+        <translation>来自 Workbench 共享扫描与诊断视图的摘要。</translation>
+    </message>
+    <message>
+        <source>Cycle time:</source>
+        <translation>周期时间：</translation>
+    </message>
+    <message>
+        <source>Status:</source>
+        <translation>状态：</translation>
+    </message>
+    <message>
+        <source>EtherCAT General properties</source>
+        <translation>EtherCAT 常规属性</translation>
+    </message>
+    <message>
+        <source>Read-only offline property and value pairs for the selected EtherCAT node. No controller, network, or physical hardware is accessed.</source>
+        <translation type="vanished">所选 EtherCAT 节点的只读离线属性和值对。不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>Read-only engineering and live identity values for the selected EtherCAT node. Viewing these values does not perform a controller operation.</source>
+        <translation>所选 EtherCAT 节点的只读工程数据和在线身份信息。查看这些值不会执行控制器操作。</translation>
+    </message>
+    <message>
+        <source>Offline properties for %1</source>
+        <translation>%1 的离线属性</translation>
+    </message>
+    <message>
+        <source>Live EtherCAT identity and scan state for %1</source>
+        <translation>%1 的在线 EtherCAT 身份与扫描状态</translation>
+    </message>
+    <message>
+        <source>Unavailable</source>
+        <translation>不可用</translation>
+    </message>
+    <message>
+        <source>Offline EtherCAT Engineering Project</source>
+        <translation>离线 EtherCAT 工程项目</translation>
+    </message>
+    <message>
+        <source>Not recorded</source>
+        <translation>未记录</translation>
+    </message>
+    <message>
+        <source>Migrated from an older format</source>
+        <translation>已从旧格式迁移</translation>
+    </message>
+    <message>
+        <source>Current format</source>
+        <translation>当前格式</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>是</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>否</translation>
+    </message>
+    <message>
+        <source>Not configured</source>
+        <translation>未配置</translation>
+    </message>
+    <message>
+        <source>Unknown ESI device</source>
+        <translation>未知 ESI 设备</translation>
+    </message>
+    <message>
+        <source>Offline / Mock target
+Object Id: %1</source>
+        <translation>离线 / Mock 目标
+对象 ID：%1</translation>
+    </message>
+    <message>
+        <source>Not assigned (offline)</source>
+        <translation>未分配（离线）</translation>
+    </message>
+    <message>
+        <source>Not available (phase 1)</source>
+        <translation>不可用（阶段 1）</translation>
+    </message>
+    <message>
+        <source>Format %1</source>
+        <translation>格式 %1</translation>
+    </message>
+    <message>
+        <source>%1 · %2</source>
+        <translation>%1 · %2</translation>
+    </message>
+    <message>
+        <source>Offline EtherCAT master properties for %1</source>
+        <translation>%1 的离线 EtherCAT 主站属性</translation>
+    </message>
+    <message>
+        <source>EtherCAT Master</source>
+        <translation>EtherCAT 主站</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名称</translation>
+    </message>
+    <message>
+        <source>Node ID</source>
+        <translation>节点 ID</translation>
+    </message>
+    <message>
+        <source>Owner slave</source>
+        <translation>所属从站</translation>
+    </message>
+    <message>
+        <source>Position</source>
+        <translation>位置</translation>
+    </message>
+    <message>
+        <source>Station address</source>
+        <translation>站地址</translation>
+    </message>
+    <message>
+        <source>Unbound — scan required</source>
+        <translation>未绑定 — 需要扫描</translation>
+    </message>
+    <message>
+        <source>AL state</source>
+        <translation>AL 状态</translation>
+    </message>
+    <message>
+        <source>Vendor ID</source>
+        <translation>厂商 ID</translation>
+    </message>
+    <message>
+        <source>Product Code</source>
+        <translation>产品代码</translation>
+    </message>
+    <message>
+        <source>Revision</source>
+        <translation>修订版本</translation>
+    </message>
+    <message>
+        <source>Serial Number</source>
+        <translation>序列号</translation>
+    </message>
+    <message>
+        <source>Alias</source>
+        <translation>别名</translation>
+    </message>
+    <message>
+        <source>ESI match</source>
+        <translation>ESI 匹配</translation>
+    </message>
+    <message>
+        <source>No matching ESI device</source>
+        <translation>没有匹配的 ESI 设备</translation>
+    </message>
+    <message>
+        <source>%1 column. Property: %2. Complete value: %3. Read-only Workbench data. Viewing this value does not perform a controller operation.</source>
+        <translation>%1 列。属性：%2。完整值：%3。Workbench 只读数据。查看此值不会执行控制器操作。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>类型</translation>
+    </message>
+    <message>
+        <source>Group</source>
+        <translation>组</translation>
+    </message>
+    <message>
+        <source>Support</source>
+        <translation>支持情况</translation>
+    </message>
+    <message>
+        <source>Supported</source>
+        <translation>支持</translation>
+    </message>
+    <message>
+        <source>Limited</source>
+        <translation>受限</translation>
+    </message>
+    <message>
+        <source>Source</source>
+        <translation>来源</translation>
+    </message>
+    <message>
+        <source>Imported</source>
+        <translation>已导入</translation>
+    </message>
+    <message>
+        <source>Format version</source>
+        <translation>格式版本</translation>
+    </message>
+    <message>
+        <source>Created by</source>
+        <translation>创建工具</translation>
+    </message>
+    <message>
+        <source>Modified</source>
+        <translation>已修改</translation>
+    </message>
+    <message>
+        <source>Target type</source>
+        <translation>目标类型</translation>
+    </message>
+    <message>
+        <source>Offline / Mock</source>
+        <translation>离线 / Mock</translation>
+    </message>
+    <message>
+        <source>Property</source>
+        <translation>属性</translation>
+    </message>
+    <message>
+        <source>Value</source>
+        <translation>值</translation>
+    </message>
+    <message>
+        <source>Empty</source>
+        <translation>空</translation>
+    </message>
+    <message>
+        <source>%1 column. Property: %2. Complete value: %3. Read-only offline Workbench data. No controller, network, or physical hardware is accessed.</source>
+        <translation>%1 列。属性：%2。完整值：%3。只读离线 Workbench 数据。不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>Cannot rename the EtherCAT project: %1</source>
+        <translation>无法重命名 EtherCAT 项目：%1</translation>
+    </message>
+    <message>
+        <source>Cannot rename the offline slave: %1</source>
+        <translation>无法重命名离线从站：%1</translation>
+    </message>
+    <message>
+        <source>Cannot rename the offline target: %1</source>
+        <translation>无法重命名离线目标：%1</translation>
+    </message>
+    <message>
+        <source>Cannot rename the EtherCAT master: %1</source>
+        <translation>无法重命名 EtherCAT 主站：%1</translation>
+    </message>
+    <message>
+        <source>Offline configuration</source>
+        <translation>离线配置</translation>
+    </message>
+    <message>
+        <source>Not available</source>
+        <translation>不可用</translation>
+    </message>
+    <message>
+        <source>Master to slave</source>
+        <translation>主站到从站</translation>
+    </message>
+    <message>
+        <source>Slave to master</source>
+        <translation>从站到主站</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>未知</translation>
+    </message>
+    <message>
+        <source>Advanced Settings...</source>
+        <translation>高级设置...</translation>
+    </message>
+    <message>
+        <source>Export Configuration File...</source>
+        <translation>导出配置文件...</translation>
+    </message>
+    <message>
+        <source>Sync Unit Assignment...</source>
+        <translation>Sync Unit 分配...</translation>
+    </message>
+    <message>
+        <source>Topology...</source>
+        <translation>拓扑...</translation>
+    </message>
+    <message>
+        <source>EtherCAT page summary</source>
+        <translation>EtherCAT 页面摘要</translation>
+    </message>
+    <message>
+        <source>EtherCAT master settings</source>
+        <translation>EtherCAT 主站设置</translation>
+    </message>
+    <message>
+        <source>EtherCAT master NetId</source>
+        <translation>EtherCAT 主站 NetId</translation>
+    </message>
+    <message>
+        <source>An ADS NetId is not assigned to the offline phase-1 master.</source>
+        <translation>离线阶段 1 主站未分配 ADS NetId。</translation>
+    </message>
+    <message>
+        <source>EtherCAT master advanced settings</source>
+        <translation>EtherCAT 主站高级设置</translation>
+    </message>
+    <message>
+        <source>Advanced master settings require a separate bounded data-contract issue.</source>
+        <translation>主站高级设置需要单独处理，并限定明确的数据契约范围。</translation>
+    </message>
+    <message>
+        <source>Export EtherCAT master configuration</source>
+        <translation>导出 EtherCAT 主站配置</translation>
+    </message>
+    <message>
+        <source>Configuration export is unavailable until a versioned configuration format is defined.</source>
+        <translation>定义带版本的配置格式之前，配置导出不可用。</translation>
+    </message>
+    <message>
+        <source>EtherCAT Sync Unit assignment</source>
+        <translation>EtherCAT Sync Unit 分配</translation>
+    </message>
+    <message>
+        <source>Sync Unit assignment is unavailable because the offline model does not represent Sync Units.</source>
+        <translation>离线模型不表示 Sync Unit，因此无法进行 Sync Unit 分配。</translation>
+    </message>
+    <message>
+        <source>Open offline EtherCAT topology</source>
+        <translation>打开离线 EtherCAT 拓扑</translation>
+    </message>
+    <message>
+        <source>Opens a read-only topology derived from the current offline project.</source>
+        <translation>打开根据当前离线项目生成的只读拓扑。</translation>
+    </message>
+    <message>
+        <source>EtherCAT cyclic frame state</source>
+        <translation>EtherCAT 周期帧状态</translation>
+    </message>
+    <message>
+        <source>NetId:</source>
+        <translation>NetId：</translation>
+    </message>
+    <message>
+        <source>EtherCAT product and revision</source>
+        <translation>EtherCAT 产品和修订版本</translation>
+    </message>
+    <message>
+        <source>EtherCAT auto-increment address</source>
+        <translation>EtherCAT 自动递增地址</translation>
+    </message>
+    <message>
+        <source>EtherCAT fixed address</source>
+        <translation>EtherCAT 固定地址</translation>
+    </message>
+    <message>
+        <source>EtherCAT configured station alias</source>
+        <translation>EtherCAT 配置站点别名</translation>
+    </message>
+    <message>
+        <source>EtherCAT identification value</source>
+        <translation>EtherCAT 标识值</translation>
+    </message>
+    <message>
+        <source>EtherCAT previous port</source>
+        <translation>EtherCAT 前置端口</translation>
+    </message>
+    <message>
+        <source>EtherCAT advanced settings</source>
+        <translation>EtherCAT 高级设置</translation>
+    </message>
+    <message>
+        <source>0 (disabled)</source>
+        <translation>0（已禁用）</translation>
+    </message>
+    <message>
+        <source>Configured Station Alias stored in the offline project. Zero disables it.</source>
+        <translation>离线项目中存储的配置站点别名。值为零时禁用。</translation>
+    </message>
+    <message>
+        <source>A fixed EtherCAT address is not represented by the phase-1 project model.</source>
+        <translation>阶段 1 项目模型不表示固定 EtherCAT 地址。</translation>
+    </message>
+    <message>
+        <source>Slave identification checking is not represented by the phase-1 project model.</source>
+        <translation>阶段 1 项目模型不表示从站标识检查。</translation>
+    </message>
+    <message>
+        <source>The configured predecessor is known, but physical port data is not modeled.</source>
+        <translation>已知配置的前置设备，但未对物理端口数据建模。</translation>
+    </message>
+    <message>
+        <source>Advanced slave settings require a separate bounded data-contract issue.</source>
+        <translation>从站高级设置需要单独处理，并限定明确的数据契约范围。</translation>
+    </message>
+    <message>
+        <source>Product/Revision:</source>
+        <translation>产品/修订版本：</translation>
+    </message>
+    <message>
+        <source>Auto Inc Addr:</source>
+        <translation>自动递增地址：</translation>
+    </message>
+    <message>
+        <source>EtherCAT Addr:</source>
+        <translation>EtherCAT 地址：</translation>
+    </message>
+    <message>
+        <source>Configured Station Alias:</source>
+        <translation>配置站点别名：</translation>
+    </message>
+    <message>
+        <source>Identification Value:</source>
+        <translation>标识值：</translation>
+    </message>
+    <message>
+        <source>Previous Port:</source>
+        <translation>前置端口：</translation>
+    </message>
+    <message>
+        <source>SM</source>
+        <translation>SM</translation>
+    </message>
+    <message>
+        <source>Direction</source>
+        <translation>方向</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>地址</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>大小</translation>
+    </message>
+    <message>
+        <source>Control</source>
+        <translation>控制</translation>
+    </message>
+    <message>
+        <source>Enabled</source>
+        <translation>已启用</translation>
+    </message>
+    <message>
+        <source>Frame</source>
+        <translation>帧</translation>
+    </message>
+    <message>
+        <source>Cmd</source>
+        <translation>命令</translation>
+    </message>
+    <message>
+        <source>Addr</source>
+        <translation>地址</translation>
+    </message>
+    <message>
+        <source>Len</source>
+        <translation>长度</translation>
+    </message>
+    <message>
+        <source>WC</source>
+        <translation>WC</translation>
+    </message>
+    <message>
+        <source>Sync Unit</source>
+        <translation>Sync Unit</translation>
+    </message>
+    <message>
+        <source>Cycle (ms)</source>
+        <translation>周期 (ms)</translation>
+    </message>
+    <message>
+        <source>Utilization (%)</source>
+        <translation>利用率 (%)</translation>
+    </message>
+    <message>
+        <source>Size / Duration (µs)</source>
+        <translation>大小 / 持续时间 (µs)</translation>
+    </message>
+    <message>
+        <source>Map Id</source>
+        <translation>映射 ID</translation>
+    </message>
+    <message>
+        <source>No slaves are configured on this offline master.</source>
+        <translation>此离线主站未配置任何从站。</translation>
+    </message>
+    <message numerus="yes">
+        <source>Offline EtherCAT master with %n configured slave(s).</source>
+        <translation>
+            <numerusform>离线 EtherCAT 主站已配置 %n 个从站。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cyclic transfer frames are not generated: the offline phase-1 project has no runtime task, frame scheduler, or Sync Unit model.</source>
+        <translation>未生成周期传输帧：离线阶段 1 项目没有运行时任务、帧调度器或 Sync Unit 模型。</translation>
+    </message>
+    <message>
+        <source>EtherCAT cyclic transfer frames</source>
+        <translation>EtherCAT 周期传输帧</translation>
+    </message>
+    <message>
+        <source>The TwinCAT-style frame columns are shown, but no runtime frame rows are generated in the offline phase.</source>
+        <translation>已显示 TwinCAT 风格的帧列，但离线阶段不会生成运行时帧行。</translation>
+    </message>
+    <message>
+        <source>Offline EtherCAT settings for %1. ESI SyncManager defaults are shown below.</source>
+        <translation>%1 的离线 EtherCAT 设置。下方显示 ESI 同步管理器默认值。</translation>
+    </message>
+    <message>
+        <source>Offline EtherCAT settings for %1. No matching ESI SyncManager data is available.</source>
+        <translation>%1 的离线 EtherCAT 设置。没有可用的匹配 ESI 同步管理器数据。</translation>
+    </message>
+    <message>
+        <source>%1 / %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>Automatic at startup (not stored)</source>
+        <translation>启动时自动设置（不存储）</translation>
+    </message>
+    <message>
+        <source>EtherCAT SyncManager defaults</source>
+        <translation>EtherCAT 同步管理器默认值</translation>
+    </message>
+    <message>
+        <source>Read-only offline SyncManager defaults from the matched ESI device. No controller, network, or physical hardware is accessed.</source>
+        <translation>来自匹配 ESI 设备的只读离线同步管理器默认值。不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>The ESI device description is no longer available. Return to Device Repository and select an available device before opening EtherCAT.</source>
+        <translation>ESI 设备描述已不可用。请返回设备存储库并选择可用设备，然后再打开 EtherCAT。</translation>
+    </message>
+    <message>
+        <source>The ESI device description is unavailable, so no SyncManager configuration can be shown. Return to Device Repository and select an available device. This read-only page does not access a controller, network, or physical hardware.</source>
+        <translation>ESI 设备描述不可用，因此无法显示同步管理器配置。请返回设备存储库并选择可用设备。此只读页面不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No ESI SyncManager configuration is available. This repository device also contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository; Workbench will not fabricate SyncManager rows, and no controller, network, or physical hardware is accessed.</source>
+        <translation>没有可用的 ESI 同步管理器配置。此存储库中的设备还包含不受支持的 ESI 结构，无法添加到离线项目。请在设备存储库中查看其支持详情；Workbench 不会虚构同步管理器行，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No ESI SyncManager configuration is available for this repository device. Workbench will not fabricate SyncManager rows. Review its source and qualification in Device Repository or import a matching ESI description; no controller, network, or physical hardware is accessed.</source>
+        <translation>此存储库中的设备没有可用的 ESI 同步管理器配置。Workbench 不会虚构同步管理器行。请在设备存储库中查看其来源和支持资格，或导入匹配的 ESI 描述；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>Imported ESI SyncManager configuration is available for read-only offline preview, but this repository device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository; no controller, network, or physical hardware is accessed.</source>
+        <translation>已导入的 ESI 同步管理器配置可用于只读离线预览，但此存储库中的设备包含不受支持的 ESI 结构，无法添加到离线项目。请在设备存储库中查看其支持详情；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>Imported ESI SyncManager configuration is available for read-only offline preview. No Project is modified, and no controller, network, or physical hardware is accessed.</source>
+        <translation>已导入的 ESI 同步管理器配置可用于只读离线预览。不会修改任何项目，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>EtherCAT properties are unavailable for this selection.</source>
+        <translation>此选择没有可用的 EtherCAT 属性。</translation>
+    </message>
+    <message>
+        <source>unnamed</source>
+        <translation>未命名</translation>
+    </message>
+    <message>
+        <source>SM %1 (%2)</source>
+        <translation>SM %1（%2）</translation>
+    </message>
+    <message>
+        <source>%1 column for SyncManager %2. Complete value: %3. Read-only offline ESI default; no controller, network, or physical hardware is accessed.</source>
+        <translation>同步管理器 %2 的 %1 列。完整值：%3。只读离线 ESI 默认值；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>Cannot update the offline slave Alias: %1</source>
+        <translation>无法更新离线从站别名：%1</translation>
+    </message>
+    <message>
+        <source>Offline EtherCAT Topology</source>
+        <translation>离线 EtherCAT 拓扑</translation>
+    </message>
+    <message>
+        <source>No configured slaves are available in the current offline project.</source>
+        <translation>当前离线项目中没有可用的已配置从站。</translation>
+    </message>
+    <message numerus="yes">
+        <source>Read-only offline topology for %n configured slave(s). Physical ports are not modeled.</source>
+        <translation>
+            <numerusform>%n 个已配置从站的只读离线拓扑。未对物理端口建模。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Offline EtherCAT topology</source>
+        <translation>离线 EtherCAT 拓扑</translation>
+    </message>
+    <message>
+        <source>Read-only configured slave order and identities from the current offline Project. Physical ports are not modeled; no controller, network, or physical hardware is accessed.</source>
+        <translation>当前离线项目中已配置从站的只读顺序和标识。未对物理端口建模；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>Auto Inc Addr</source>
+        <translation>自动递增地址</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>前置设备</translation>
+    </message>
+    <message>
+        <source>Port</source>
+        <translation>端口</translation>
+    </message>
+    <message>
+        <source>Vendor</source>
+        <translation>厂商</translation>
+    </message>
+    <message>
+        <source>Product</source>
+        <translation>产品</translation>
+    </message>
+    <message>
+        <source>Status</source>
+        <translation>状态</translation>
+    </message>
+    <message>
+        <source>Not modeled</source>
+        <translation>未建模</translation>
+    </message>
+    <message>
+        <source>Offline configured</source>
+        <translation>已离线配置</translation>
+    </message>
+    <message>
+        <source>%1 column for configured slave at Position %2 (%3). Complete value: %4. Read-only offline Project topology; physical ports are not modeled, and no controller, network, or physical hardware is accessed.</source>
+        <translation>位置 %2（%3）处已配置从站的 %1 列。完整值：%4。只读离线项目拓扑；未对物理端口建模，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>%1 (port not modeled)</source>
+        <translation>%1（端口未建模）</translation>
+    </message>
+    <message>
+        <source>EtherCAT Master (port not modeled)</source>
+        <translation>EtherCAT 主站（端口未建模）</translation>
+    </message>
+    <message>
+        <source>1 PDO</source>
+        <translation>1 个 PDO</translation>
+    </message>
+    <message>
+        <source>%1 PDOs</source>
+        <translation>%1 个 PDO</translation>
+    </message>
+    <message>
+        <source>1 entry</source>
+        <translation>1 个条目</translation>
+    </message>
+    <message>
+        <source>%1 entries</source>
+        <translation>%1 个条目</translation>
+    </message>
+    <message>
+        <source>%1, %2, %3 bits</source>
+        <translation>%1，%2，%3 位</translation>
+    </message>
+    <message>
+        <source>Device identity</source>
+        <translation>设备标识</translation>
+    </message>
+    <message>
+        <source>ESI device name</source>
+        <translation>ESI 设备名称</translation>
+    </message>
+    <message>
+        <source>ESI device type</source>
+        <translation>ESI 设备类型</translation>
+    </message>
+    <message>
+        <source>Stable ESI device object ID</source>
+        <translation>稳定的 ESI 设备对象 ID</translation>
+    </message>
+    <message>
+        <source>ESI vendor ID</source>
+        <translation>ESI 厂商 ID</translation>
+    </message>
+    <message>
+        <source>ESI product code</source>
+        <translation>ESI 产品代码</translation>
+    </message>
+    <message>
+        <source>ESI revision number</source>
+        <translation>ESI 修订版本号</translation>
+    </message>
+    <message>
+        <source>ESI device group</source>
+        <translation>ESI 设备组</translation>
+    </message>
+    <message>
+        <source>Offline configuration coverage</source>
+        <translation>离线配置覆盖范围</translation>
+    </message>
+    <message>
+        <source>ESI SyncManager count</source>
+        <translation>ESI 同步管理器数量</translation>
+    </message>
+    <message>
+        <source>ESI RxPDO summary</source>
+        <translation>ESI RxPDO 摘要</translation>
+    </message>
+    <message>
+        <source>ESI TxPDO summary</source>
+        <translation>ESI TxPDO 摘要</translation>
+    </message>
+    <message>
+        <source>ESI CoE support</source>
+        <translation>ESI CoE 支持</translation>
+    </message>
+    <message>
+        <source>ESI Startup parameter count</source>
+        <translation>ESI 启动参数数量</translation>
+    </message>
+    <message>
+        <source>ESI DC mode count</source>
+        <translation>ESI DC 模式数量</translation>
+    </message>
+    <message>
+        <source>Import qualification</source>
+        <translation>导入资格评估</translation>
+    </message>
+    <message>
+        <source>ESI configuration support level</source>
+        <translation>ESI 配置支持级别</translation>
+    </message>
+    <message>
+        <source>ESI parse warning count</source>
+        <translation>ESI 解析警告数量</translation>
+    </message>
+    <message>
+        <source>Unsupported ESI feature count</source>
+        <translation>不受支持的 ESI 功能数量</translation>
+    </message>
+    <message>
+        <source>ESI source</source>
+        <translation>ESI 来源</translation>
+    </message>
+    <message>
+        <source>ESI source file</source>
+        <translation>ESI 源文件</translation>
+    </message>
+    <message>
+        <source>ESI source SHA-256</source>
+        <translation>ESI 源文件 SHA-256</translation>
+    </message>
+    <message>
+        <source>ESI import time</source>
+        <translation>ESI 导入时间</translation>
+    </message>
+    <message>
+        <source>ESI device General page</source>
+        <translation>ESI 设备常规页面</translation>
+    </message>
+    <message>
+        <source>Read-only ESI catalogue entry. Identity, offline configuration coverage, and qualification come from the imported XML description; no controller is accessed.</source>
+        <translation>只读 ESI 目录条目。标识、离线配置覆盖范围和支持资格来自导入的 XML 描述；不会访问控制器。</translation>
+    </message>
+    <message>
+        <source>ESI device General page description</source>
+        <translation>ESI 设备常规页面说明</translation>
+    </message>
+    <message>
+        <source>ESI device description availability</source>
+        <translation>ESI 设备描述可用性</translation>
+    </message>
+    <message>
+        <source>ESI device General details</source>
+        <translation>ESI 设备常规详情</translation>
+    </message>
+    <message>
+        <source>Vendor ID:</source>
+        <translation>厂商 ID：</translation>
+    </message>
+    <message>
+        <source>Product Code:</source>
+        <translation>产品代码：</translation>
+    </message>
+    <message>
+        <source>Revision:</source>
+        <translation>修订版本：</translation>
+    </message>
+    <message>
+        <source>Group:</source>
+        <translation>组：</translation>
+    </message>
+    <message>
+        <source>ESI CoE capability details</source>
+        <translation>ESI CoE 能力详情</translation>
+    </message>
+    <message>
+        <source>Sync Managers:</source>
+        <translation>同步管理器：</translation>
+    </message>
+    <message>
+        <source>RxPDOs:</source>
+        <translation>RxPDO：</translation>
+    </message>
+    <message>
+        <source>TxPDOs:</source>
+        <translation>TxPDO：</translation>
+    </message>
+    <message>
+        <source>CoE:</source>
+        <translation>CoE：</translation>
+    </message>
+    <message>
+        <source>CoE features:</source>
+        <translation>CoE 功能：</translation>
+    </message>
+    <message>
+        <source>Startup parameters:</source>
+        <translation>启动参数：</translation>
+    </message>
+    <message>
+        <source>DC modes:</source>
+        <translation>DC 模式：</translation>
+    </message>
+    <message>
+        <source>ESI parse warning details</source>
+        <translation>ESI 解析警告详情</translation>
+    </message>
+    <message>
+        <source>Unsupported ESI feature details</source>
+        <translation>不受支持的 ESI 功能详情</translation>
+    </message>
+    <message>
+        <source>Support:</source>
+        <translation>支持情况：</translation>
+    </message>
+    <message>
+        <source>Warnings:</source>
+        <translation>警告：</translation>
+    </message>
+    <message>
+        <source>Warning details:</source>
+        <translation>警告详情：</translation>
+    </message>
+    <message>
+        <source>Unsupported features:</source>
+        <translation>不受支持的功能：</translation>
+    </message>
+    <message>
+        <source>Unsupported details:</source>
+        <translation>不受支持项详情：</translation>
+    </message>
+    <message>
+        <source>Original import path recorded by the local repository.</source>
+        <translation>本地存储库记录的原始导入路径。</translation>
+    </message>
+    <message>
+        <source>SHA-256 of the preserved source XML used for integrity checking.</source>
+        <translation>用于完整性检查的保留源 XML 的 SHA-256。</translation>
+    </message>
+    <message>
+        <source>Source file:</source>
+        <translation>源文件：</translation>
+    </message>
+    <message>
+        <source>SHA-256:</source>
+        <translation>SHA-256：</translation>
+    </message>
+    <message>
+        <source>Imported:</source>
+        <translation>导入时间：</translation>
+    </message>
+    <message>
+        <source>The selected ESI device description is unavailable.</source>
+        <translation>所选 ESI 设备描述不可用。</translation>
+    </message>
+    <message>
+        <source>The ESI device description for %1 is unavailable.</source>
+        <translation>%1 的 ESI 设备描述不可用。</translation>
+    </message>
+    <message>
+        <source>Not declared</source>
+        <translation>未声明</translation>
+    </message>
+    <message>
+        <source>SDO Info: %1 · PDO Assignment: %2 · PDO Configuration: %3 · Complete Access: %4</source>
+        <translation>SDO 信息：%1 · PDO 分配：%2 · PDO 配置：%3 · 完整访问：%4</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>无</translation>
+    </message>
+    <message>
+        <source>Requested files: %1</source>
+        <translation>请求的文件：%1</translation>
+    </message>
+    <message>
+        <source>Imported devices: %1</source>
+        <translation>已导入设备：%1</translation>
+    </message>
+    <message>
+        <source>Updated devices: %1</source>
+        <translation>已更新设备：%1</translation>
+    </message>
+    <message>
+        <source>Duplicate files: %1</source>
+        <translation>重复文件：%1</translation>
+    </message>
+    <message>
+        <source>Failed files: %1</source>
+        <translation>失败文件：%1</translation>
+    </message>
+    <message>
+        <source>Canceled: %1</source>
+        <translation>已取消：%1</translation>
+    </message>
+    <message>
+        <source>Errors:</source>
+        <translation>错误：</translation>
+    </message>
+    <message>
+        <source>%1: %2</source>
+        <translation>%1：%2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n additional error(s) not displayed</source>
+        <translation>
+            <numerusform>另有 %n 个错误未显示</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>ESI Device Repository</source>
+        <translation>ESI 设备存储库</translation>
+    </message>
+    <message>
+        <source>Repository summary</source>
+        <translation>存储库摘要</translation>
+    </message>
+    <message>
+        <source>Import ESI Files...</source>
+        <translation>导入 ESI 文件...</translation>
+    </message>
+    <message>
+        <source>Reload Device Descriptions</source>
+        <translation>重新加载设备描述</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>ESI device repository management</source>
+        <translation>ESI 设备存储库管理</translation>
+    </message>
+    <message>
+        <source>Built-in and local offline ESI files are indexed automatically. Add vendor XML to %1, or import files here.</source>
+        <translation>内置和本地离线 ESI 文件会自动建立索引。可将厂商 XML 放入 %1，或在此导入。</translation>
+    </message>
+    <message>
+        <source>ESI repository status</source>
+        <translation>ESI 存储库状态</translation>
+    </message>
+    <message>
+        <source>Indexed ESI device count</source>
+        <translation>已索引的 ESI 设备数量</translation>
+    </message>
+    <message>
+        <source>Supported ESI device count</source>
+        <translation>受支持的 ESI 设备数量</translation>
+    </message>
+    <message>
+        <source>Limited ESI device count</source>
+        <translation>受限 ESI 设备数量</translation>
+    </message>
+    <message>
+        <source>Indexed ESI vendor count</source>
+        <translation>已索引的 ESI 厂商数量</translation>
+    </message>
+    <message>
+        <source>Referenced ESI source path count</source>
+        <translation>引用的 ESI 源路径数量</translation>
+    </message>
+    <message>
+        <source>Indexed devices:</source>
+        <translation>已索引设备：</translation>
+    </message>
+    <message>
+        <source>Supported:</source>
+        <translation>支持：</translation>
+    </message>
+    <message>
+        <source>Limited:</source>
+        <translation>受限：</translation>
+    </message>
+    <message>
+        <source>Vendors:</source>
+        <translation>厂商：</translation>
+    </message>
+    <message>
+        <source>Referenced source paths:</source>
+        <translation>引用的源路径：</translation>
+    </message>
+    <message>
+        <source>Import ESI XML files</source>
+        <translation>导入 ESI XML 文件</translation>
+    </message>
+    <message>
+        <source>Reload ESI device descriptions</source>
+        <translation>重新加载 ESI 设备描述</translation>
+    </message>
+    <message>
+        <source>Cancel ESI repository operation</source>
+        <translation>取消 ESI 存储库操作</translation>
+    </message>
+    <message>
+        <source>Import one or more local EtherCAT Slave Information XML files.</source>
+        <translation>导入一个或多个本地 EtherCAT 从站信息 XML 文件。</translation>
+    </message>
+    <message>
+        <source>Reparse every ESI XML file already stored in the local repository.</source>
+        <translation>重新解析本地存储库中已有的每个 ESI XML 文件。</translation>
+    </message>
+    <message>
+        <source>Cancel the current import or reload operation.</source>
+        <translation>取消当前导入或重新加载操作。</translation>
+    </message>
+    <message>
+        <source>ESI repository operation progress</source>
+        <translation>ESI 存储库操作进度</translation>
+    </message>
+    <message>
+        <source>ESI repository operation state</source>
+        <translation>ESI 存储库操作状态</translation>
+    </message>
+    <message>
+        <source>No repository operation has been run in this session.</source>
+        <translation>本次会话中尚未运行存储库操作。</translation>
+    </message>
+    <message>
+        <source>ESI repository operation result</source>
+        <translation>ESI 存储库操作结果</translation>
+    </message>
+    <message>
+        <source>Import and reload results, including rejected files, appear here.</source>
+        <translation>导入和重新加载结果（包括被拒绝的文件）将显示在此处。</translation>
+    </message>
+    <message>
+        <source>EtherCAT Slave Information (*.xml);;XML files (*.xml)</source>
+        <translation>EtherCAT 从站信息 (*.xml);;XML 文件 (*.xml)</translation>
+    </message>
+    <message>
+        <source>Reloading device descriptions</source>
+        <translation>正在重新加载设备描述</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>就绪</translation>
+    </message>
+    <message>
+        <source>The local ESI repository is unavailable.</source>
+        <translation>本地 ESI 存储库不可用。</translation>
+    </message>
+    <message>
+        <source>Another ESI repository operation is already running.</source>
+        <translation>另一个 ESI 存储库操作已在运行。</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>导入</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation>重新加载</translation>
+    </message>
+    <message>
+        <source>The ESI repository did not start the requested operation.</source>
+        <translation>ESI 存储库未能启动请求的操作。</translation>
+    </message>
+    <message>
+        <source>%1 in progress...</source>
+        <translation>正在%1...</translation>
+    </message>
+    <message>
+        <source>Canceling %1...</source>
+        <translation>正在取消%1...</translation>
+    </message>
+    <message>
+        <source>Repository operation stopped</source>
+        <translation>存储库操作已停止</translation>
+    </message>
+    <message>
+        <source>The repository operation ended before a result was available.</source>
+        <translation>存储库操作在结果可用之前已结束。</translation>
+    </message>
+    <message>
+        <source>%1 canceled</source>
+        <translation>%1已取消</translation>
+    </message>
+    <message>
+        <source>%1 complete</source>
+        <translation>%1完成</translation>
+    </message>
+    <message>
+        <source>Repository operation could not start</source>
+        <translation>无法启动存储库操作</translation>
+    </message>
+    <message>
+        <source>Device</source>
+        <translation>设备</translation>
+    </message>
+    <message>
+        <source>Supported ESI description; this device can be appended to the selected offline EtherCAT Master. No controller or network is accessed.</source>
+        <translation>受支持的 ESI 描述；可将此设备追加到所选离线 EtherCAT 主站。不会访问控制器或网络。</translation>
+    </message>
+    <message>
+        <source>Limited ESI description; this device cannot be appended to the selected offline EtherCAT Master until its unsupported structures are resolved. No controller or network is accessed.</source>
+        <translation>受限的 ESI 描述；解决其不受支持的结构之前，无法将此设备追加到所选离线 EtherCAT 主站。不会访问控制器或网络。</translation>
+    </message>
+    <message>
+        <source>%1: %2. %3</source>
+        <translation>%1：%2。%3</translation>
+    </message>
+    <message>
+        <source>Extended Information</source>
+        <translation>扩展信息</translation>
+    </message>
+    <message>
+        <source>Show Previous Revisions</source>
+        <translation>显示早期修订版本</translation>
+    </message>
+    <message>
+        <source>Add EtherCAT Device</source>
+        <translation>添加 EtherCAT 设备</translation>
+    </message>
+    <message>
+        <source>Add EtherCAT device from the ESI catalogue</source>
+        <translation>从 ESI 目录添加 EtherCAT 设备</translation>
+    </message>
+    <message>
+        <source>Select an imported ESI device to append to the selected offline EtherCAT Master. No controller or network is accessed.</source>
+        <translation>选择一个已导入的 ESI 设备，将其追加到所选离线 EtherCAT 主站。不会访问控制器或网络。</translation>
+    </message>
+    <message>
+        <source>Device selection description</source>
+        <translation>设备选择说明</translation>
+    </message>
+    <message>
+        <source>Filter ESI devices</source>
+        <translation>筛选 ESI 设备</translation>
+    </message>
+    <message>
+        <source>Search name, type, identity, group, or support</source>
+        <translation>搜索名称、类型、标识、组或支持情况</translation>
+    </message>
+    <message>
+        <source>Show Vendor ID, Product Code, Revision, and Group columns.</source>
+        <translation>显示厂商 ID、产品代码、修订版本和组列。</translation>
+    </message>
+    <message>
+        <source>Show every imported revision instead of only the highest revision per product.</source>
+        <translation>显示所有已导入的修订版本，而非仅显示每个产品的最高修订版本。</translation>
+    </message>
+    <message>
+        <source>Available ESI devices</source>
+        <translation>可用的 ESI 设备</translation>
+    </message>
+    <message>
+        <source>Imported EtherCAT devices available for offline configuration.</source>
+        <translation>可用于离线配置的已导入 EtherCAT 设备。</translation>
+    </message>
+    <message>
+        <source>Selected ESI device status</source>
+        <translation>所选 ESI 设备状态</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>添加</translation>
+    </message>
+    <message>
+        <source>No ESI devices are available. Import device descriptions in the ESI Device Repository first.</source>
+        <translation>没有可用的 ESI 设备。请先在 ESI 设备存储库中导入设备描述。</translation>
+    </message>
+    <message>
+        <source>No ESI device matches the current filter.</source>
+        <translation>没有 ESI 设备与当前筛选条件匹配。</translation>
+    </message>
+    <message>
+        <source>Limited ESI description. This device cannot be added until its unsupported structures are resolved.</source>
+        <translation>受限的 ESI 描述。解决其不受支持的结构之前，无法添加此设备。</translation>
+    </message>
+    <message>
+        <source>Ready to append %1 (%2, revision %3) to the selected offline EtherCAT Master.</source>
+        <translation>已准备将 %1（%2，修订版本 %3）追加到所选离线 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Outputs</source>
+        <translation>输出</translation>
+    </message>
+    <message>
+        <source>Inputs</source>
+        <translation>输入</translation>
+    </message>
+    <message>
+        <source>Outputs (RxPDO)</source>
+        <translation>输出（RxPDO）</translation>
+    </message>
+    <message>
+        <source>Inputs (TxPDO)</source>
+        <translation>输入（TxPDO）</translation>
+    </message>
+    <message>
+        <source>Unsupported</source>
+        <translation>不受支持</translation>
+    </message>
+    <message>
+        <source>%1, %2</source>
+        <translation>%1, %2</translation>
+    </message>
+    <message>
+        <source>%1, %2: %3</source>
+        <translation>%1, %2：%3</translation>
+    </message>
+    <message>
+        <source>Selecting this Sync Manager filters PDO Assignment, PDO List, and PDO Content below.</source>
+        <translation>选择此同步管理器后，将筛选下方的 PDO 分配、PDO 列表和 PDO 内容。</translation>
+    </message>
+    <message>
+        <source>%1 B</source>
+        <translation>%1 B</translation>
+    </message>
+    <message>
+        <source>Size (byte.bit)</source>
+        <translation>大小（字节.位）</translation>
+    </message>
+    <message>
+        <source>Limit</source>
+        <translation>限制</translation>
+    </message>
+    <message>
+        <source>PDOs</source>
+        <translation>PDO</translation>
+    </message>
+    <message>
+        <source>Assigned</source>
+        <translation>已分配</translation>
+    </message>
+    <message>
+        <source>Not assigned</source>
+        <translation>未分配</translation>
+    </message>
+    <message>
+        <source>Mandatory PDOs cannot be removed from the assignment.</source>
+        <translation>不能从分配中移除必需的 PDO。</translation>
+    </message>
+    <message>
+        <source>This ESI mapping is preserved for inspection but cannot be selected.</source>
+        <translation>此 ESI 映射已保留供检查，但无法选择。</translation>
+    </message>
+    <message>
+        <source>This PDO assignment is read-only in the current Process Data selection.</source>
+        <translation>此 PDO 分配在当前过程数据选择中为只读。</translation>
+    </message>
+    <message>
+        <source>Select whether this PDO participates in cyclic process data.</source>
+        <translation>选择此 PDO 是否参与周期过程数据。</translation>
+    </message>
+    <message>
+        <source>Index</source>
+        <translation>索引</translation>
+    </message>
+    <message>
+        <source>Flags</source>
+        <translation>标志</translation>
+    </message>
+    <message>
+        <source>Assigned to cyclic process data</source>
+        <translation>已分配给周期过程数据</translation>
+    </message>
+    <message>
+        <source>Available but not assigned</source>
+        <translation>可用但未分配</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>默认</translation>
+    </message>
+    <message>
+        <source>Predefined Group</source>
+        <translation>预定义组</translation>
+    </message>
+    <message>
+        <source>Automatic offset. The entry is not in the active process image.</source>
+        <translation>自动偏移。该条目不在活动过程映像中。</translation>
+    </message>
+    <message>
+        <source>Automatic offset: %1 byte(s), bit %2.</source>
+        <translation>自动偏移：%1 字节，第 %2 位。</translation>
+    </message>
+    <message>
+        <source>Requested offset: %1 bit(s).</source>
+        <translation>请求的偏移：%1 位。</translation>
+    </message>
+    <message>
+        <source>Auto (%1)</source>
+        <translation>自动（%1）</translation>
+    </message>
+    <message>
+        <source>Auto</source>
+        <translation>自动</translation>
+    </message>
+    <message>
+        <source>Subindex</source>
+        <translation>子索引</translation>
+    </message>
+    <message>
+        <source>Bits</source>
+        <translation>位数</translation>
+    </message>
+    <message>
+        <source>Bit Offset</source>
+        <translation>位偏移</translation>
+    </message>
+    <message>
+        <source>Change not applied. %1</source>
+        <translation>更改未应用。%1</translation>
+    </message>
+    <message>
+        <source>PDO entry Index must be a decimal or 0x-prefixed hexadecimal integer from 1 to 65535.</source>
+        <translation>PDO 条目的索引必须是 1 至 65535 之间的十进制整数，或以 0x 开头的十六进制整数。</translation>
+    </message>
+    <message>
+        <source>PDO entry Subindex must be a decimal or 0x-prefixed hexadecimal integer from 0 to 255.</source>
+        <translation>PDO 条目的子索引必须是 0 至 255 之间的十进制整数，或以 0x 开头的十六进制整数。</translation>
+    </message>
+    <message>
+        <source>PDO entry Bits must be a positive integer.</source>
+        <translation>PDO 条目的位数必须是正整数。</translation>
+    </message>
+    <message>
+        <source>PDO entry Bit Offset must be Auto or an integer greater than or equal to -1.</source>
+        <translation>PDO 条目的位偏移必须为“自动”或大于等于 -1 的整数。</translation>
+    </message>
+    <message>
+        <source>PDO entry Name cannot be empty.</source>
+        <translation>PDO 条目的名称不能为空。</translation>
+    </message>
+    <message>
+        <source>Absolute process-image bit range [%1, %2).</source>
+        <translation>过程映像绝对位范围 [%1, %2)。</translation>
+    </message>
+    <message>
+        <source>Offset (byte.bit)</source>
+        <translation>偏移（字节.位）</translation>
+    </message>
+    <message>
+        <source>PDO</source>
+        <translation>PDO</translation>
+    </message>
+    <message>
+        <source>Store ESI Defaults</source>
+        <translation>存储 ESI 默认值</translation>
+    </message>
+    <message>
+        <source>Process Data edit feedback</source>
+        <translation>过程数据编辑反馈</translation>
+    </message>
+    <message>
+        <source>Process Data Sync Managers</source>
+        <translation>过程数据同步管理器</translation>
+    </message>
+    <message>
+        <source>Sync Managers for the current Process Data selection. Selecting a row filters the PDO tables.</source>
+        <translation>当前过程数据选择对应的同步管理器。选择一行将筛选 PDO 表。</translation>
+    </message>
+    <message>
+        <source>Process Data PDO Assignment</source>
+        <translation>过程数据 PDO 分配</translation>
+    </message>
+    <message>
+        <source>PDOs available for the selected Sync Manager and whether each participates in cyclic process data.</source>
+        <translation>所选同步管理器可用的 PDO，以及各 PDO 是否参与周期过程数据。</translation>
+    </message>
+    <message>
+        <source>Process Data PDO List</source>
+        <translation>过程数据 PDO 列表</translation>
+    </message>
+    <message>
+        <source>PDO catalogue for the selected Sync Manager.</source>
+        <translation>所选同步管理器的 PDO 目录。</translation>
+    </message>
+    <message>
+        <source>Process Data PDO Content</source>
+        <translation>过程数据 PDO 内容</translation>
+    </message>
+    <message>
+        <source>Entries in the selected PDO, including mapping addresses, sizes, names, and types.</source>
+        <translation>所选 PDO 中的条目，包括映射地址、大小、名称和类型。</translation>
+    </message>
+    <message>
+        <source>Process Image Preview</source>
+        <translation>过程映像预览</translation>
+    </message>
+    <message>
+        <source>Validated absolute layout of active outputs and inputs in the offline process image.</source>
+        <translation>离线过程映像中活动输出和输入经验证的绝对布局。</translation>
+    </message>
+    <message>
+        <source>Sync Manager</source>
+        <translation>同步管理器</translation>
+    </message>
+    <message>
+        <source>PDO Assignment</source>
+        <translation>PDO 分配</translation>
+    </message>
+    <message>
+        <source>PDO List</source>
+        <translation>PDO 列表</translation>
+    </message>
+    <message>
+        <source>PDO Content</source>
+        <translation>PDO 内容</translation>
+    </message>
+    <message>
+        <source>The ESI device description is no longer available. Return to Device Repository and select an available device before opening Process Data.</source>
+        <translation>ESI 设备描述已不可用。请返回设备存储库并选择可用设备，然后再打开过程数据。</translation>
+    </message>
+    <message>
+        <source>No ESI Process Data mapping is available. This repository device also contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository; Workbench will not fabricate Sync Managers or PDOs, and no controller, network, or physical hardware is accessed.</source>
+        <translation>没有可用的 ESI 过程数据映射。此存储库中的设备还包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情；Workbench 不会虚构同步管理器或 PDO，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No ESI Process Data mapping is available for this repository device. The device can still be added to an offline Project, but Workbench will not fabricate Sync Managers or PDOs. Review its source in Device Repository or import a matching ESI description that contains Process Data; no controller, network, or physical hardware is accessed.</source>
+        <translation>此存储库中的设备没有可用的 ESI 过程数据映射。仍可将该设备添加到离线项目，但 Workbench 不会虚构同步管理器或 PDO。请在设备存储库中查看其来源，或导入包含过程数据的匹配 ESI 描述；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>ESI Process Data is available for read-only preview, but its validation errors and unsupported ESI structures mean this repository device cannot be added to an offline Project. Review the error and support details, then import a corrected matching ESI description through Device Repository; no controller, network, or physical hardware is accessed.</source>
+        <translation>ESI 过程数据可供只读预览，但由于存在验证错误和不受支持的 ESI 结构，此存储库中的设备无法添加到离线项目。请查看错误和支持详情，然后通过设备存储库导入已修正的匹配 ESI 描述；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>ESI Process Data is available for read-only preview, but validation errors mean this repository device cannot be added to an offline Project. Review the error details below and import a corrected matching ESI description through Device Repository; no controller, network, or physical hardware is accessed.</source>
+        <translation>ESI 过程数据可供只读预览，但由于存在验证错误，此存储库中的设备无法添加到离线项目。请查看下方错误详情，并通过设备存储库导入已修正的匹配 ESI 描述；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>ESI Process Data is available for read-only preview, but this repository device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository; no controller, network, or physical hardware is accessed.</source>
+        <translation>ESI 过程数据可供只读预览，但此存储库中的设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>ESI Process Data catalogue. Select a Sync Manager and PDO to inspect its mapping. Add the device to an offline project before editing.</source>
+        <translation>ESI 过程数据目录。请选择同步管理器和 PDO 以检查其映射。编辑前请将设备添加到离线项目。</translation>
+    </message>
+    <message>
+        <source>Read-only tree selection. The owning slave and PDO are focused here; edit assignments on the configured-slave Process Data page.</source>
+        <translation>只读树选择。此处聚焦所属从站和 PDO；请在已配置从站的过程数据页面编辑分配。</translation>
+    </message>
+    <message>
+        <source>ESI defaults are shown but are not stored in the project. Store the defaults or edit an assignment to create an undoable offline configuration.</source>
+        <translation>当前显示 ESI 默认值，但尚未存储到项目中。请存储默认值或编辑分配，以创建可撤销的离线配置。</translation>
+    </message>
+    <message>
+        <source>Offline Process Data configuration with ESI reference. Changes are validated before they enter the project Undo/Redo history.</source>
+        <translation>带 ESI 参考的离线过程数据配置。更改经验证后才会进入项目的撤销/重做历史。</translation>
+    </message>
+    <message>
+        <source>Offline Process Data configuration. The matching ESI description is not available, but persisted stable-ID mappings remain editable.</source>
+        <translation>离线过程数据配置。匹配的 ESI 描述不可用，但已持久化的稳定 ID 映射仍可编辑。</translation>
+    </message>
+    <message>
+        <source>No Process Data configuration or matching ESI description is available.</source>
+        <translation>没有可用的过程数据配置或匹配的 ESI 描述。</translation>
+    </message>
+    <message>
+        <source>Restore ESI Defaults</source>
+        <translation>恢复 ESI 默认值</translation>
+    </message>
+    <message>
+        <source>Change not applied.</source>
+        <translation>更改未应用。</translation>
+    </message>
+    <message>
+        <source>Change not applied: this Process Data selection is read-only.</source>
+        <translation>更改未应用：当前过程数据选择为只读。</translation>
+    </message>
+    <message>
+        <source>Change not applied: %1</source>
+        <translation>更改未应用：%1</translation>
+    </message>
+    <message>
+        <source>The ESI device description is unavailable, so no Process Data can be shown. Return to Device Repository and select an available device. This read-only page does not access a controller, network, or physical hardware.</source>
+        <translation>ESI 设备描述不可用，因此无法显示过程数据。请返回设备存储库并选择可用设备。此只读页面不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No ESI Process Data mapping is available. This repository device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository. This read-only page will not fabricate Sync Managers or PDOs and does not access a controller, network, or physical hardware.</source>
+        <translation>没有可用的 ESI 过程数据映射。此存储库中的设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情。此只读页面不会虚构同步管理器或 PDO，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No ESI Process Data mapping is available for this repository device. This read-only page will not fabricate Sync Managers or PDOs. Review its source in Device Repository or import a matching ESI description; no controller, network, or physical hardware is accessed.</source>
+        <translation>此存储库中的设备没有可用的 ESI 过程数据映射。此只读页面不会虚构同步管理器或 PDO。请在设备存储库中查看其来源，或导入匹配的 ESI 描述；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>This is a read-only preview of imported ESI Process Data. The mapping has validation errors and the repository device contains unsupported ESI structures, so it cannot be added to an offline Project. Review the error and support details, then import a corrected matching ESI description through Device Repository. The preview does not modify a Project or access a controller, network, or physical hardware.</source>
+        <translation>这是已导入 ESI 过程数据的只读预览。该映射存在验证错误，且存储库中的设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请查看错误和支持详情，然后通过设备存储库导入已修正的匹配 ESI 描述。预览不会修改项目，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>This is a read-only preview of imported ESI Process Data. The mapping has validation errors and cannot be added to an offline Project. Review the error details and import a corrected matching ESI description through Device Repository. The preview does not modify a Project or access a controller, network, or physical hardware.</source>
+        <translation>这是已导入 ESI 过程数据的只读预览。该映射存在验证错误，因此无法添加到离线项目。请查看错误详情，并通过设备存储库导入已修正的匹配 ESI 描述。预览不会修改项目，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>This is a read-only preview of imported ESI Process Data. The repository device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository. The preview does not modify a Project or access a controller, network, or physical hardware.</source>
+        <translation>这是已导入 ESI 过程数据的只读预览。此存储库中的设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情。预览不会修改项目，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>This is a read-only offline preview of imported ESI Process Data. Selecting rows changes only this page presentation; it does not modify a Project or access a controller, network, or physical hardware.</source>
+        <translation>这是已导入 ESI 过程数据的只读离线预览。选择行只会改变此页面的呈现，不会修改项目，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>This mapping has validation errors and the Device contains unsupported ESI structures, so it cannot be added to an offline Project. Review the error and support details, then import a corrected matching ESI description through Device Repository.</source>
+        <translation>此映射存在验证错误，且设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请查看错误和支持详情，然后通过设备存储库导入已修正的匹配 ESI 描述。</translation>
+    </message>
+    <message>
+        <source>This mapping cannot be added to an offline Project. Import a corrected matching ESI description through Device Repository.</source>
+        <translation>此映射无法添加到离线项目。请通过设备存储库导入已修正的匹配 ESI 描述。</translation>
+    </message>
+    <message>
+        <source>This Device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository.</source>
+        <translation>此设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情。</translation>
+    </message>
+    <message>
+        <source>The ESI device description is unavailable, so no Process Data can be shown.</source>
+        <translation>ESI 设备描述不可用，因此无法显示过程数据。</translation>
+    </message>
+    <message>
+        <source>No ESI Process Data mapping is available. This device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository.</source>
+        <translation>没有可用的 ESI 过程数据映射。此设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情。</translation>
+    </message>
+    <message>
+        <source>No ESI Process Data mapping is available to preview; Workbench will not fabricate Sync Managers or PDOs.</source>
+        <translation>没有可供预览的 ESI 过程数据映射；Workbench 不会虚构同步管理器或 PDO。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n configuration error(s).</source>
+        <translation>
+            <numerusform>%n 个配置错误。</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n configuration warning(s).</source>
+        <translation>
+            <numerusform>%n 个配置警告。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>This Process Data is available only for read-only preview. </source>
+        <translation>此过程数据仅可用于只读预览。 </translation>
+    </message>
+    <message>
+        <source>Configuration is valid. Outputs: %1 byte(s); inputs: %2 byte(s).</source>
+        <translation>配置有效。输出：%1 字节；输入：%2 字节。</translation>
+    </message>
+    <message>
+        <source>Startup request Data must contain at least one hexadecimal byte.</source>
+        <translation>启动请求的数据必须至少包含一个十六进制字节。</translation>
+    </message>
+    <message>
+        <source>Startup request Data must contain an even number of hexadecimal digits.</source>
+        <translation>启动请求的数据必须包含偶数个十六进制数字。</translation>
+    </message>
+    <message>
+        <source>Startup request Data contains a non-hexadecimal character.</source>
+        <translation>启动请求的数据包含非十六进制字符。</translation>
+    </message>
+    <message>
+        <source>Request %1, %2</source>
+        <translation>请求 %1, %2</translation>
+    </message>
+    <message>
+        <source>Request %1, %2: %3</source>
+        <translation>请求 %1, %2：%3</translation>
+    </message>
+    <message>
+        <source>The angle-bracketed transition identifies a fixed ESI request. It is read-only and cannot be enabled or disabled, edited, deleted, or moved.</source>
+        <translation>带尖括号的状态转换表示固定 ESI 请求。该请求为只读，无法启用、禁用、编辑、删除或移动。</translation>
+    </message>
+    <message>
+        <source>This Startup request is read-only in the current context.</source>
+        <translation>此启动请求在当前上下文中为只读。</translation>
+    </message>
+    <message>
+        <source>Enable or disable this request in the offline Startup sequence.</source>
+        <translation>在离线启动序列中启用或禁用此请求。</translation>
+    </message>
+    <message>
+        <source>Edit this value directly or with Edit; Project Undo and Redo remain available.</source>
+        <translation>可直接编辑此值或使用“编辑”操作；项目的撤销和重做功能仍然可用。</translation>
+    </message>
+    <message>
+        <source>This value is read-only; other non-fixed request fields remain editable.</source>
+        <translation>此值为只读；其他非固定请求字段仍可编辑。</translation>
+    </message>
+    <message>
+        <source>CoE</source>
+        <translation>CoE</translation>
+    </message>
+    <message>
+        <source>Order</source>
+        <translation>顺序</translation>
+    </message>
+    <message>
+        <source>Transition</source>
+        <translation>状态转换</translation>
+    </message>
+    <message>
+        <source>Protocol</source>
+        <translation>协议</translation>
+    </message>
+    <message>
+        <source>Data</source>
+        <translation>数据</translation>
+    </message>
+    <message>
+        <source>Comment</source>
+        <translation>注释</translation>
+    </message>
+    <message>
+        <source>Startup request Order must be a decimal or 0x-prefixed hexadecimal integer from 0 to 2147483647.</source>
+        <translation>启动请求的顺序必须是 0 至 2147483647 之间的十进制整数，或以 0x 开头的十六进制整数。</translation>
+    </message>
+    <message>
+        <source>Angle brackets are reserved for fixed requests imported from ESI.</source>
+        <translation>尖括号保留用于从 ESI 导入的固定请求。</translation>
+    </message>
+    <message>
+        <source>Startup request Index must be a decimal or 0x-prefixed hexadecimal integer from 0 to 65535.</source>
+        <translation>启动请求的索引必须是 0 至 65535 之间的十进制整数，或以 0x 开头的十六进制整数。</translation>
+    </message>
+    <message>
+        <source>Startup request Subindex must be a decimal or 0x-prefixed hexadecimal integer from 0 to 255.</source>
+        <translation>启动请求的子索引必须是 0 至 255 之间的十进制整数，或以 0x 开头的十六进制整数。</translation>
+    </message>
+    <message>
+        <source>Startup request Type is unavailable.</source>
+        <translation>启动请求的类型不可用。</translation>
+    </message>
+    <message>
+        <source>Send this request during startup</source>
+        <translation>在启动期间发送此请求</translation>
+    </message>
+    <message>
+        <source>Startup Request</source>
+        <translation>启动请求</translation>
+    </message>
+    <message>
+        <source>Transition:</source>
+        <translation>状态转换：</translation>
+    </message>
+    <message>
+        <source>Protocol:</source>
+        <translation>协议：</translation>
+    </message>
+    <message>
+        <source>Index:</source>
+        <translation>索引：</translation>
+    </message>
+    <message>
+        <source>Subindex:</source>
+        <translation>子索引：</translation>
+    </message>
+    <message>
+        <source>Data type:</source>
+        <translation>数据类型：</translation>
+    </message>
+    <message>
+        <source>Data (hex):</source>
+        <translation>数据（十六进制）：</translation>
+    </message>
+    <message>
+        <source>Enter a valid object index, subindex, and an even number of hex digits.</source>
+        <translation>请输入有效的对象索引、子索引和偶数个十六进制数字。</translation>
+    </message>
+    <message>
+        <source>Move Up</source>
+        <translation>上移</translation>
+    </message>
+    <message>
+        <source>Move Down</source>
+        <translation>下移</translation>
+    </message>
+    <message>
+        <source>New...</source>
+        <translation>新建...</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation>删除</translation>
+    </message>
+    <message>
+        <source>Edit...</source>
+        <translation>编辑...</translation>
+    </message>
+    <message>
+        <source>Startup edit feedback</source>
+        <translation>启动请求编辑反馈</translation>
+    </message>
+    <message>
+        <source>Startup requests</source>
+        <translation>启动请求</translation>
+    </message>
+    <message>
+        <source>Ordered offline CoE Startup requests with transition, object address, data, and comment details.</source>
+        <translation>按顺序排列的离线 CoE 启动请求，包含状态转换、对象地址、数据和注释详情。</translation>
+    </message>
+    <message>
+        <source>The ESI device description is no longer available. Return to Device Repository and select an available device before opening Startup.</source>
+        <translation>ESI 设备描述已不可用。请返回设备存储库并选择可用设备，然后再打开启动配置。</translation>
+    </message>
+    <message>
+        <source>No ESI Startup request is available. This repository device also contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository; Workbench will not fabricate Startup requests, and no SDO, controller, network, or physical hardware is accessed.</source>
+        <translation>没有可用的 ESI 启动请求。此存储库中的设备还包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情；Workbench 不会虚构启动请求，也不会访问 SDO、控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No ESI Startup request is available for this repository device. The device can still be added to an offline Project, where Startup requests can be created manually, but Workbench will not fabricate requests. Review its source in Device Repository or import a matching ESI description; no SDO, controller, network, or physical hardware is accessed.</source>
+        <translation>此存储库中的设备没有可用的 ESI 启动请求。仍可将该设备添加到离线项目并手动创建启动请求，但 Workbench 不会虚构请求。请在设备存储库中查看其来源，或导入匹配的 ESI 描述；不会访问 SDO、控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>ESI Startup requests are available for read-only preview, but validation errors and unsupported ESI structures mean this repository device cannot be added to an offline Project. Review the error and support details, then import a corrected matching ESI description through Device Repository; no SDO, controller, network, or physical hardware is accessed.</source>
+        <translation>ESI 启动请求可供只读预览，但由于存在验证错误和不受支持的 ESI 结构，此存储库中的设备无法添加到离线项目。请查看错误和支持详情，然后通过设备存储库导入已修正的匹配 ESI 描述；不会访问 SDO、控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>ESI Startup requests are available for read-only preview, but validation errors mean this repository device cannot be added to an offline Project. Review the error details below and import a corrected matching ESI description through Device Repository; no SDO, controller, network, or physical hardware is accessed.</source>
+        <translation>ESI 启动请求可供只读预览，但由于存在验证错误，此存储库中的设备无法添加到离线项目。请查看下方错误详情，并通过设备存储库导入已修正的匹配 ESI 描述；不会访问 SDO、控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>ESI Startup requests are available for read-only preview, but this repository device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository; no SDO, controller, network, or physical hardware is accessed.</source>
+        <translation>ESI 启动请求可供只读预览，但此存储库中的设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情；不会访问 SDO、控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>ESI Startup requests. Their transition, object address, raw data, and order can be inspected here. Add the device to an offline Project before editing; no Startup request is sent from this read-only preview.</source>
+        <translation>ESI 启动请求。可在此检查其状态转换、对象地址、原始数据和顺序。编辑前请将设备添加到离线项目；此只读预览不会发送任何启动请求。</translation>
+    </message>
+    <message>
+        <source>ESI Startup defaults are shown but are not stored in the project. Store the defaults or create a request to enter the Undo/Redo history.</source>
+        <translation>当前显示 ESI 启动默认值，但尚未存储到项目中。请存储默认值或创建请求，使其进入撤销/重做历史。</translation>
+    </message>
+    <message>
+        <source>Offline Startup request list with ESI reference. Enabled requests are applied in the displayed order for each EtherCAT state transition.</source>
+        <translation>带 ESI 参考的离线启动请求列表。对于每个 EtherCAT 状态转换，已启用的请求将按显示顺序应用。</translation>
+    </message>
+    <message>
+        <source>Offline Startup request list. The matching ESI description is unavailable, but the persisted commands remain editable.</source>
+        <translation>离线启动请求列表。匹配的 ESI 描述不可用，但已持久化的命令仍可编辑。</translation>
+    </message>
+    <message>
+        <source>No Startup requests are configured. Use New to add an offline CoE request.</source>
+        <translation>尚未配置启动请求。请使用“新建”添加离线 CoE 请求。</translation>
+    </message>
+    <message>
+        <source>Change not applied: this ESI catalogue page is read-only.</source>
+        <translation>更改未应用：此 ESI 目录页面为只读。</translation>
+    </message>
+    <message>
+        <source>The ESI device description is unavailable, so no Startup requests can be shown. Return to Device Repository and select an available device. This read-only page does not send an SDO request or access a controller, network, or physical hardware.</source>
+        <translation>ESI 设备描述不可用，因此无法显示启动请求。请返回设备存储库并选择可用设备。此只读页面不会发送 SDO 请求，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No ESI Startup request is available. This repository device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository. This read-only page will not fabricate requests and does not send an SDO request or access a controller, network, or physical hardware.</source>
+        <translation>没有可用的 ESI 启动请求。此存储库中的设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情。此只读页面不会虚构请求，也不会发送 SDO 请求或访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No ESI Startup request is available for this repository device. This read-only page will not fabricate requests. Add the device to an offline Project to create Startup requests manually, or review its source in Device Repository; no SDO request is sent and no controller, network, or physical hardware is accessed.</source>
+        <translation>此存储库中的设备没有可用的 ESI 启动请求。此只读页面不会虚构请求。请将设备添加到离线项目以手动创建启动请求，或在设备存储库中查看其来源；不会发送 SDO 请求，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>This is a read-only preview of imported ESI Startup requests. The configuration has validation errors and the repository device contains unsupported ESI structures, so it cannot be added to an offline Project. Review the error and support details, then import a corrected matching ESI description through Device Repository. The preview does not modify a Project, send an SDO request, or access a controller, network, or physical hardware.</source>
+        <translation>这是已导入 ESI 启动请求的只读预览。该配置存在验证错误，且存储库中的设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请查看错误和支持详情，然后通过设备存储库导入已修正的匹配 ESI 描述。预览不会修改项目、发送 SDO 请求，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>This is a read-only preview of imported ESI Startup requests. The configuration has validation errors and cannot be added to an offline Project. Review the error details and import a corrected matching ESI description through Device Repository. The preview does not modify a Project, send an SDO request, or access a controller, network, or physical hardware.</source>
+        <translation>这是已导入 ESI 启动请求的只读预览。该配置存在验证错误，因此无法添加到离线项目。请查看错误详情，并通过设备存储库导入已修正的匹配 ESI 描述。预览不会修改项目、发送 SDO 请求，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>This is a read-only preview of imported ESI Startup requests. The repository device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository. The preview does not modify a Project, send an SDO request, or access a controller, network, or physical hardware.</source>
+        <translation>这是已导入 ESI 启动请求的只读预览。此存储库中的设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情。预览不会修改项目、发送 SDO 请求，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>This is a read-only offline preview of imported ESI Startup requests. Add the device to an offline Project before editing. Selecting rows changes only this page presentation; it does not modify a Project, send an SDO request, or access a controller, network, or physical hardware.</source>
+        <translation>这是已导入 ESI 启动请求的只读离线预览。编辑前请将设备添加到离线项目。选择行只会改变此页面的呈现，不会修改项目、发送 SDO 请求，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>Delete Startup Request</source>
+        <translation>删除启动请求</translation>
+    </message>
+    <message>
+        <source>Delete the selected offline Startup request?</source>
+        <translation>要删除所选的离线启动请求吗？</translation>
+    </message>
+    <message>
+        <source>This Startup configuration has validation errors and the Device contains unsupported ESI structures, so it cannot be added to an offline Project. Review the error and support details, then import a corrected matching ESI description through Device Repository.</source>
+        <translation>此启动配置存在验证错误，且设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请查看错误和支持详情，然后通过设备存储库导入已修正的匹配 ESI 描述。</translation>
+    </message>
+    <message>
+        <source>This Startup configuration cannot be added to an offline Project. Import a corrected matching ESI description through Device Repository.</source>
+        <translation>此启动配置无法添加到离线项目。请通过设备存储库导入已修正的匹配 ESI 描述。</translation>
+    </message>
+    <message>
+        <source>The ESI device description is unavailable, so no Startup requests can be shown.</source>
+        <translation>ESI 设备描述不可用，因此无法显示启动请求。</translation>
+    </message>
+    <message>
+        <source>No ESI Startup request is available. This device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository.</source>
+        <translation>没有可用的 ESI 启动请求。此设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情。</translation>
+    </message>
+    <message>
+        <source>No ESI Startup request is available to preview; Workbench will not fabricate requests.</source>
+        <translation>没有可供预览的 ESI 启动请求；Workbench 不会虚构请求。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n Startup configuration error(s).</source>
+        <translation>
+            <numerusform>%n 个启动配置错误。</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n Startup configuration warning(s).</source>
+        <translation>
+            <numerusform>%n 个启动配置警告。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>These Startup requests are available only for read-only preview. </source>
+        <translation>这些启动请求仅可用于只读预览。 </translation>
+    </message>
+    <message numerus="yes">
+        <source>Startup configuration is valid. %n request(s).</source>
+        <translation>
+            <numerusform>启动配置有效。共 %n 个请求。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>&gt;%1&lt;</source>
+        <translation>&gt;%1&lt;</translation>
+    </message>
+    <message>
+        <source>FALSE</source>
+        <translation>FALSE</translation>
+    </message>
+    <message>
+        <source>TRUE</source>
+        <translation>TRUE</translation>
+    </message>
+    <message>
+        <source>1 digit</source>
+        <translation>1 位数字</translation>
+    </message>
+    <message>
+        <source>%1 digits</source>
+        <translation>%1 位数字</translation>
+    </message>
+    <message>
+        <source>1 byte</source>
+        <translation>1 字节</translation>
+    </message>
+    <message>
+        <source>%1 bytes</source>
+        <translation>%1 字节</translation>
+    </message>
+    <message>
+        <source>Unit</source>
+        <translation>单位</translation>
+    </message>
+    <message>
+        <source>Edit this local Mock value temporarily; this does not change an offline Project.</source>
+        <translation>临时编辑此本地 Mock 值；这不会更改离线项目。</translation>
+    </message>
+    <message>
+        <source>This cell is read-only in the current view.</source>
+        <translation>此单元格在当前视图中为只读。</translation>
+    </message>
+    <message>
+        <source>Object %1, %2 column: %3. Data type: %4. Source: %5. Access flags are a local engineering prototype. No controller connection or SDO transfer occurs. %6</source>
+        <translation>对象 %1，%2 列：%3。数据类型：%4。来源：%5。访问标志为本地工程原型。不会连接控制器或进行 SDO 传输。%6</translation>
+    </message>
+    <message>
+        <source>empty</source>
+        <translation>空</translation>
+    </message>
+    <message>
+        <source>offline</source>
+        <translation>离线</translation>
+    </message>
+    <message>
+        <source>Mock</source>
+        <translation>Mock</translation>
+    </message>
+    <message>
+        <source>Object 0x%1</source>
+        <translation>对象 0x%1</translation>
+    </message>
+    <message>
+        <source>Device name</source>
+        <translation>设备名称</translation>
+    </message>
+    <message>
+        <source>Identity</source>
+        <translation>标识</translation>
+    </message>
+    <message>
+        <source>Product code</source>
+        <translation>产品代码</translation>
+    </message>
+    <message>
+        <source>Serial number</source>
+        <translation>序列号</translation>
+    </message>
+    <message>
+        <source>Startup object</source>
+        <translation>启动对象</translation>
+    </message>
+    <message>
+        <source>Update List</source>
+        <translation>更新列表</translation>
+    </message>
+    <message>
+        <source>Advanced...</source>
+        <translation>高级...</translation>
+    </message>
+    <message>
+        <source>Add to Startup...</source>
+        <translation>添加到启动配置...</translation>
+    </message>
+    <message>
+        <source>Auto Update</source>
+        <translation>自动更新</translation>
+    </message>
+    <message>
+        <source>Single Update</source>
+        <translation>单次更新</translation>
+    </message>
+    <message>
+        <source>Show Offline Data</source>
+        <translation>显示离线数据</translation>
+    </message>
+    <message>
+        <source>Clear Filters</source>
+        <translation>清除筛选条件</translation>
+    </message>
+    <message>
+        <source>CoE operation feedback</source>
+        <translation>CoE 操作反馈</translation>
+    </message>
+    <message>
+        <source>Automatic polling requires a future controller Provider and is unavailable.</source>
+        <translation>自动轮询依赖后续实现的控制器提供程序，目前不可用。</translation>
+    </message>
+    <message>
+        <source>Mock values update only when Update List is selected.</source>
+        <translation>仅在选择“更新列表”时更新 Mock 值。</translation>
+    </message>
+    <message>
+        <source>Filter object dictionary</source>
+        <translation>筛选对象字典</translation>
+    </message>
+    <message>
+        <source>Filter CoE object dictionary</source>
+        <translation>筛选 CoE 对象字典</translation>
+    </message>
+    <message>
+        <source>Filter local Mock and offline CoE objects by index, name, flags, value, or unit.</source>
+        <translation>按索引、名称、标志、值或单位筛选本地 Mock 和离线 CoE 对象。</translation>
+    </message>
+    <message>
+        <source>CoE object dictionary</source>
+        <translation>CoE 对象字典</translation>
+    </message>
+    <message>
+        <source>Browse locally generated Mock and offline CoE object values.</source>
+        <translation>浏览本地生成的 Mock 和离线 CoE 对象值。</translation>
+    </message>
+    <message>
+        <source>No matching CoE objects</source>
+        <translation>没有匹配的 CoE 对象</translation>
+    </message>
+    <message>
+        <source>No local Mock or offline CoE objects match the current filters.</source>
+        <translation>没有本地 Mock 或离线 CoE 对象与当前筛选条件匹配。</translation>
+    </message>
+    <message>
+        <source>No CoE objects match the current filters.</source>
+        <translation>没有 CoE 对象与当前筛选条件匹配。</translation>
+    </message>
+    <message>
+        <source>Clear text and advanced CoE filters and return to the object dictionary.</source>
+        <translation>清除文本和高级 CoE 筛选条件，并返回对象字典。</translation>
+    </message>
+    <message>
+        <source>Module OD (AoE Port):</source>
+        <translation>模块 OD（AoE 端口）：</translation>
+    </message>
+    <message>
+        <source>Offline Data</source>
+        <translation>离线数据</translation>
+    </message>
+    <message>
+        <source>Mock Data - sample %1</source>
+        <translation>Mock 数据 - 样本 %1</translation>
+    </message>
+    <message>
+        <source>Enter at least one complete hexadecimal byte.</source>
+        <translation>请至少输入一个完整的十六进制字节。</translation>
+    </message>
+    <message>
+        <source>Hexadecimal bytes require an even number of digits; the supplied value contains %1.</source>
+        <translation>十六进制字节需要偶数个数字；提供的值包含 %1 个数字。</translation>
+    </message>
+    <message>
+        <source>Use only hexadecimal digits 0-9 or A-F. Spaces, colons, underscores, and an optional 0x prefix are allowed.</source>
+        <translation>只能使用十六进制数字 0-9 或 A-F。允许使用空格、冒号、下划线和可选的 0x 前缀。</translation>
+    </message>
+    <message>
+        <source>This object expects %1; the supplied value contains %2.</source>
+        <translation>此对象需要 %1；提供的值包含 %2。</translation>
+    </message>
+    <message>
+        <source>This value is no longer editable in the current Mock view.</source>
+        <translation>此值在当前 Mock 视图中已不可编辑。</translation>
+    </message>
+    <message>
+        <source>The value could not be accepted in the current Mock view.</source>
+        <translation>当前 Mock 视图无法接受此值。</translation>
+    </message>
+    <message>
+        <source>the selected object</source>
+        <translation>所选对象</translation>
+    </message>
+    <message>
+        <source>Local Mock value for %1 was not changed. %2</source>
+        <translation>%1 的本地 Mock 值未更改。%2</translation>
+    </message>
+    <message>
+        <source>MOCK DATA: this CoE object dictionary is generated locally from the offline project and ESI description. No controller connection or SDO transfer occurs.</source>
+        <translation>MOCK 数据：此 CoE 对象字典根据离线项目和 ESI 描述在本地生成。不会连接控制器或进行 SDO 传输。</translation>
+    </message>
+    <message>
+        <source>MOCK DATA: no CoE object dictionary is declared by the matching ESI. Only locally derived identity and configuration objects are shown; no controller connection occurs.</source>
+        <translation>MOCK 数据：匹配的 ESI 未声明 CoE 对象字典。仅显示本地派生的标识和配置对象；不会连接控制器。</translation>
+    </message>
+    <message>
+        <source>Advanced CoE Dictionary Settings</source>
+        <translation>高级 CoE 字典设置</translation>
+    </message>
+    <message>
+        <source>Dictionary source</source>
+        <translation>字典来源</translation>
+    </message>
+    <message>
+        <source>Mock object dictionary</source>
+        <translation>Mock 对象字典</translation>
+    </message>
+    <message>
+        <source>Offline from device description</source>
+        <translation>来自设备描述的离线数据</translation>
+    </message>
+    <message>
+        <source>All Objects</source>
+        <translation>所有对象</translation>
+    </message>
+    <message>
+        <source>Communication Objects (0x1000-0x1FFF)</source>
+        <translation>通信对象（0x1000-0x1FFF）</translation>
+    </message>
+    <message>
+        <source>Vendor-specific Objects (0x2000-0x5FFF)</source>
+        <translation>厂商特定对象（0x2000-0x5FFF）</translation>
+    </message>
+    <message>
+        <source>Profile-specific Objects (0x6000-0x9FFF)</source>
+        <translation>设备配置文件特定对象（0x6000-0x9FFF）</translation>
+    </message>
+    <message>
+        <source>Hide Standard Objects</source>
+        <translation>隐藏标准对象</translation>
+    </message>
+    <message>
+        <source>Hide PDO Objects</source>
+        <translation>隐藏 PDO 对象</translation>
+    </message>
+    <message>
+        <source>Object range:</source>
+        <translation>对象范围：</translation>
+    </message>
+    <message>
+        <source>Add to Startup</source>
+        <translation>添加到启动配置</translation>
+    </message>
+    <message>
+        <source>Add the selected local Mock value for %1 (%2) as a new PS Startup request? Existing requests are not overwritten.</source>
+        <translation>要将 %1（%2）的所选本地 Mock 值添加为新的 PS 启动请求吗？现有请求不会被覆盖。</translation>
+    </message>
+    <message>
+        <source>Copied from CoE Online Mock: %1</source>
+        <translation>复制自 CoE 在线 Mock：%1</translation>
+    </message>
+    <message>
+        <source>Startup request was not added: %1</source>
+        <translation>未添加启动请求：%1</translation>
+    </message>
+    <message>
+        <source>Mock value added as Startup order %1. The project Undo command can remove it.</source>
+        <translation>Mock 值已添加为顺序 %1 的启动请求。可使用项目的撤销命令将其移除。</translation>
+    </message>
+    <message>
+        <source>Enable Distributed Clocks</source>
+        <translation>启用分布式时钟</translation>
+    </message>
+    <message>
+        <source>Enable SYNC 0</source>
+        <translation>启用 SYNC 0</translation>
+    </message>
+    <message>
+        <source>Enable SYNC 1</source>
+        <translation>启用 SYNC 1</translation>
+    </message>
+    <message>
+        <source>Use as potential Reference Clock</source>
+        <translation>用作候选参考时钟</translation>
+    </message>
+    <message>
+        <source>Distributed Clocks edit feedback</source>
+        <translation>分布式时钟编辑反馈</translation>
+    </message>
+    <message>
+        <source>All cycle and shift values are edited and stored in nanoseconds (ns).</source>
+        <translation>所有周期和偏移值均以纳秒（ns）为单位编辑和存储。</translation>
+    </message>
+    <message>
+        <source>Distributed Clocks operation mode</source>
+        <translation>分布式时钟工作模式</translation>
+    </message>
+    <message>
+        <source>AssignActivate value</source>
+        <translation>AssignActivate 值</translation>
+    </message>
+    <message>
+        <source>SYNC 0 cycle time in nanoseconds</source>
+        <translation>SYNC 0 周期时间（纳秒）</translation>
+    </message>
+    <message>
+        <source>SYNC 0 shift time in nanoseconds</source>
+        <translation>SYNC 0 偏移时间（纳秒）</translation>
+    </message>
+    <message>
+        <source>SYNC 1 cycle time in nanoseconds</source>
+        <translation>SYNC 1 周期时间（纳秒）</translation>
+    </message>
+    <message>
+        <source>SYNC 1 shift time in nanoseconds</source>
+        <translation>SYNC 1 偏移时间（纳秒）</translation>
+    </message>
+    <message>
+        <source>Cyclic Mode</source>
+        <translation>周期模式</translation>
+    </message>
+    <message>
+        <source>Operation Mode:</source>
+        <translation>工作模式：</translation>
+    </message>
+    <message>
+        <source>AssignActivate:</source>
+        <translation>AssignActivate：</translation>
+    </message>
+    <message>
+        <source>SYNC 0</source>
+        <translation>SYNC 0</translation>
+    </message>
+    <message>
+        <source>Cycle Time [ns]:</source>
+        <translation>周期时间 [ns]：</translation>
+    </message>
+    <message>
+        <source>Shift Time [ns]:</source>
+        <translation>偏移时间 [ns]：</translation>
+    </message>
+    <message>
+        <source>SYNC 1</source>
+        <translation>SYNC 1</translation>
+    </message>
+    <message>
+        <source>The ESI device description is no longer available. Return to Device Repository and select an available device.</source>
+        <translation>ESI 设备描述已不可用。请返回设备存储库并选择可用设备。</translation>
+    </message>
+    <message>
+        <source>No ESI Distributed Clocks operation mode is available. This repository device also contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository; no controller, network, or physical hardware is accessed.</source>
+        <translation>没有可用的 ESI 分布式时钟工作模式。此存储库中的设备还包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No ESI Distributed Clocks operation mode is available for this repository device. Add the device to an offline Project to enter manual timing; no controller, network, or physical hardware is accessed.</source>
+        <translation>此存储库中的设备没有可用的 ESI 分布式时钟工作模式。请将设备添加到离线项目以输入手动时序；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>ESI Distributed Clocks modes are available for read-only preview, but this repository device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository; no controller, network, or physical hardware is accessed.</source>
+        <translation>ESI 分布式时钟模式可供只读预览，但此存储库中的设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情；不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>ESI Distributed Clocks modes. Select an operation mode to preview its read-only timing. Add the device to an offline project before changing or storing its operation mode or timing.</source>
+        <translation>ESI 分布式时钟模式。请选择工作模式以只读预览其时序。更改或存储工作模式或时序前，请将设备添加到离线项目。</translation>
+    </message>
+    <message>
+        <source>ESI DC defaults are shown but are not stored in the project. Store the defaults or edit a field to enter the Undo/Redo history.</source>
+        <translation>当前显示 ESI DC 默认值，但尚未存储到项目中。请存储默认值或编辑字段，使其进入撤销/重做历史。</translation>
+    </message>
+    <message>
+        <source>Offline Distributed Clocks configuration with ESI reference. Every accepted field change is validated and undoable.</source>
+        <translation>带 ESI 参考的离线分布式时钟配置。每项已接受的字段更改都经过验证且可撤销。</translation>
+    </message>
+    <message>
+        <source>Offline Distributed Clocks configuration. No ESI reference is available, but the persisted mode and timing remain editable.</source>
+        <translation>离线分布式时钟配置。没有可用的 ESI 参考，但已持久化的模式和时序仍可编辑。</translation>
+    </message>
+    <message>
+        <source>No ESI Distributed Clocks mode or offline DC configuration is available. Enter a manual operation mode before enabling DC.</source>
+        <translation>没有可用的 ESI 分布式时钟模式或离线 DC 配置。启用 DC 前，请输入手动工作模式。</translation>
+    </message>
+    <message>
+        <source>Selects an imported ESI operation mode for read-only offline preview. The preview does not modify a Project or access a controller, network, or physical hardware.</source>
+        <translation>选择已导入的 ESI 工作模式进行只读离线预览。预览不会修改项目，也不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>Selects and stores an ESI Distributed Clocks operation mode in the offline Project as one undoable change. No controller, network, or physical hardware is accessed.</source>
+        <translation>选择 ESI 分布式时钟工作模式并将其存储到离线项目，作为一项可撤销的更改。不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No Distributed Clocks operation mode is available for selection in this context.</source>
+        <translation>当前上下文中没有可供选择的分布式时钟工作模式。</translation>
+    </message>
+    <message>
+        <source>Selects an imported ESI operation mode for read-only offline preview. This repository device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository. The preview does not access a controller, network, or physical hardware.</source>
+        <translation>选择已导入的 ESI 工作模式进行只读离线预览。此存储库中的设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情。预览不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No ESI Distributed Clocks operation mode is available. This repository device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository. This read-only page does not access a controller, network, or physical hardware.</source>
+        <translation>没有可用的 ESI 分布式时钟工作模式。此存储库中的设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情。此只读页面不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>No ESI Distributed Clocks operation mode is available for this repository device. Add it to an offline Project to enter manual timing. This read-only page does not access a controller, network, or physical hardware.</source>
+        <translation>此存储库中的设备没有可用的 ESI 分布式时钟工作模式。请将其添加到离线项目以输入手动时序。此只读页面不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>The ESI device description is unavailable, so no Distributed Clocks operation mode can be selected. Return to Device Repository and select an available device. This read-only page does not access a controller, network, or physical hardware.</source>
+        <translation>ESI 设备描述不可用，因此无法选择分布式时钟工作模式。请返回设备存储库并选择可用设备。此只读页面不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>ESI operation modes changed; select a current mode.</source>
+        <translation>ESI 工作模式已更改；请选择当前模式。</translation>
+    </message>
+    <message>
+        <source>AssignActivate must be a decimal or hexadecimal 16-bit value.</source>
+        <translation>AssignActivate 必须是十进制或十六进制的 16 位值。</translation>
+    </message>
+    <message>
+        <source>Cycle and shift times must be whole nanoseconds.</source>
+        <translation>周期时间和偏移时间必须为整数纳秒。</translation>
+    </message>
+    <message>
+        <source>The ESI device description is unavailable, so no Distributed Clocks data can be shown.</source>
+        <translation>ESI 设备描述不可用，因此无法显示分布式时钟数据。</translation>
+    </message>
+    <message>
+        <source>No ESI Distributed Clocks operation mode is available. This device contains unsupported ESI structures and cannot be added to an offline Project. Review its support details in Device Repository.</source>
+        <translation>没有可用的 ESI 分布式时钟工作模式。此设备包含不受支持的 ESI 结构，因此无法添加到离线项目。请在设备存储库中查看其支持详情。</translation>
+    </message>
+    <message>
+        <source>No ESI Distributed Clocks operation mode is available to preview.</source>
+        <translation>没有可供预览的 ESI 分布式时钟工作模式。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n Distributed Clocks configuration error(s).</source>
+        <translation>
+            <numerusform>%n 个分布式时钟配置错误。</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n Distributed Clocks configuration warning(s).</source>
+        <translation>
+            <numerusform>%n 个分布式时钟配置警告。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>This Distributed Clocks mode is available only for read-only preview. </source>
+        <translation>此分布式时钟模式仅可用于只读预览。 </translation>
+    </message>
+    <message>
+        <source>Distributed Clocks configuration is valid.</source>
+        <translation>分布式时钟配置有效。</translation>
+    </message>
+    <message>
+        <source>Distributed Clocks are disabled; the offline configuration is valid.</source>
+        <translation>分布式时钟已禁用；离线配置有效。</translation>
+    </message>
+    <message>
+        <source>Offline</source>
+        <translation>离线</translation>
+    </message>
+    <message>
+        <source>No controller control operation</source>
+        <translation type="vanished">无控制器控制操作</translation>
+    </message>
+    <message>
+        <source>The controller reports that the control lease is already owned.</source>
+        <translation type="vanished">控制器报告控制租约已被占用。</translation>
+    </message>
+    <message>
+        <source>No local Mock scan or diagnostics workflow is active.</source>
+        <translation>当前没有正在运行的本地 Mock 扫描或诊断工作流。</translation>
+    </message>
+    <message>
+        <source>No diagnostics workflow is active.</source>
+        <translation>当前没有正在运行的诊断工作流。</translation>
+    </message>
+    <message>
+        <source>in progress</source>
+        <translation>进行中</translation>
+    </message>
+    <message>
+        <source>succeeded</source>
+        <translation>已成功</translation>
+    </message>
+    <message>
+        <source>failed</source>
+        <translation>失败</translation>
+    </message>
+    <message>
+        <source>No controller is connected.</source>
+        <translation type="vanished">未连接控制器。</translation>
+    </message>
+    <message>
+        <source>Unnamed Scan Provider</source>
+        <translation>未命名的扫描提供程序</translation>
+    </message>
+    <message>
+        <source>Unnamed Diagnostics Provider</source>
+        <translation>未命名的诊断提供程序</translation>
+    </message>
+    <message>
+        <source>Connect to the controller and scan the EtherCAT bus</source>
+        <translation>连接控制器并扫描 EtherCAT 总线</translation>
+    </message>
+    <message>
+        <source>No Diagnostics Provider registered</source>
+        <translation>未注册诊断提供程序</translation>
+    </message>
+    <message>
+        <source>No Scan Provider registered | Local Mock only</source>
+        <translation>未注册扫描提供程序 | 仅限本地 Mock</translation>
+    </message>
+    <message>
+        <source>No Diagnostics Provider registered | Local Mock only</source>
+        <translation>未注册诊断提供程序 | 仅限本地 Mock</translation>
+    </message>
+    <message>
+        <source>%1 available</source>
+        <translation>%1 可用</translation>
+    </message>
+    <message>
+        <source>%1 unavailable</source>
+        <translation>%1 不可用</translation>
+    </message>
+    <message>
+        <source>Scan controller bus</source>
+        <translation>扫描控制器总线</translation>
+    </message>
+    <message>
+        <source>No provider</source>
+        <translation>无提供程序</translation>
+    </message>
+    <message>
+        <source>No provider · Mock only</source>
+        <translation>无提供程序 · 仅限 Mock</translation>
+    </message>
+    <message>
+        <source>The project file could not be loaded.</source>
+        <translation>无法加载项目文件。</translation>
+    </message>
+    <message>
+        <source>Project load error: %1</source>
+        <translation>项目加载错误：%1</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>新增</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>缺失</translation>
+    </message>
+    <message>
+        <source>Duplicate</source>
+        <translation>重复</translation>
+    </message>
+    <message>
+        <source>DC</source>
+        <translation>DC</translation>
+    </message>
+    <message>
+        <source>Config</source>
+        <translation>配置</translation>
+    </message>
+    <message>
+        <source>FreeRun</source>
+        <translation>FreeRun</translation>
+    </message>
+    <message>
+        <source>Run</source>
+        <translation>运行</translation>
+    </message>
+    <message>
+        <source>Stopped</source>
+        <translation>已停止</translation>
+    </message>
+    <message>
+        <source>Starting</source>
+        <translation>正在启动</translation>
+    </message>
+    <message>
+        <source>Running</source>
+        <translation>正在运行</translation>
+    </message>
+    <message>
+        <source>Stopping</source>
+        <translation>正在停止</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>失败</translation>
+    </message>
+    <message>
+        <source>PDO %1</source>
+        <translation>PDO %1</translation>
+    </message>
+    <message>
+        <source>Padding</source>
+        <translation>填充</translation>
+    </message>
+    <message>
+        <source>Entry %1:%2</source>
+        <translation>条目 %1:%2</translation>
+    </message>
+    <message>
+        <source>No mapped variables</source>
+        <translation>没有映射变量</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n variable(s), %1 byte(s)</source>
+        <translation>
+            <numerusform>%n 个变量，%1 字节</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>@%1.%2, %3, %4 bit(s)</source>
+        <translation>@%1.%2，%3，%4 位</translation>
+    </message>
+    <message>
+        <source>@%1.%2 · %3</source>
+        <translation>@%1.%2 · %3</translation>
+    </message>
+    <message>
+        <source>No assigned PDOs</source>
+        <translation>没有已分配的 PDO</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n assigned PDO(s)</source>
+        <translation>
+            <numerusform>%n 个已分配的 PDO</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, SM%2, %3 bit(s)</source>
+        <translation>%1，SM%2，%3 位</translation>
+    </message>
+    <message>
+        <source>%1 · SM%2</source>
+        <translation>%1 · SM%2</translation>
+    </message>
+    <message>
+        <source>%1:%2, %3, %4 bit(s)</source>
+        <translation>%1:%2，%3，%4 位</translation>
+    </message>
+    <message>
+        <source>%1:%2</source>
+        <translation>%1:%2</translation>
+    </message>
+    <message>
+        <source>No PDO entries</source>
+        <translation>没有 PDO 条目</translation>
+    </message>
+    <message>
+        <source>The assigned PDO has no mapped entries</source>
+        <translation>已分配的 PDO 没有映射条目</translation>
+    </message>
+    <message>
+        <source>No mapped entries</source>
+        <translation>没有映射条目</translation>
+    </message>
+    <message>
+        <source>No assigned RxPDOs</source>
+        <translation>没有已分配的 RxPDO</translation>
+    </message>
+    <message>
+        <source>No assigned TxPDOs</source>
+        <translation>没有已分配的 TxPDO</translation>
+    </message>
+    <message>
+        <source>Select mappings on the Process Data page</source>
+        <translation>请在过程数据页面选择映射</translation>
+    </message>
+    <message>
+        <source>Configure mappings</source>
+        <translation>配置映射</translation>
+    </message>
+    <message>
+        <source>No input variables</source>
+        <translation>没有输入变量</translation>
+    </message>
+    <message>
+        <source>No selected TxPDO entries</source>
+        <translation>没有选中的 TxPDO 条目</translation>
+    </message>
+    <message>
+        <source>No output variables</source>
+        <translation>没有输出变量</translation>
+    </message>
+    <message>
+        <source>No selected RxPDO entries</source>
+        <translation>没有选中的 RxPDO 条目</translation>
+    </message>
+    <message>
+        <source>RxPDO</source>
+        <translation>RxPDO</translation>
+    </message>
+    <message>
+        <source>TxPDO</source>
+        <translation>TxPDO</translation>
+    </message>
+    <message>
+        <source>Modules / Channels</source>
+        <translation>模块 / 通道</translation>
+    </message>
+    <message>
+        <source>No configured modules</source>
+        <translation>没有已配置模块</translation>
+    </message>
+    <message>
+        <source>No modular data</source>
+        <translation>无模块化数据</translation>
+    </message>
+    <message>
+        <source>No module or channel data</source>
+        <translation>没有模块或通道数据</translation>
+    </message>
+    <message>
+        <source>No modular profile is stored in this project</source>
+        <translation>此项目中未存储模块化配置文件</translation>
+    </message>
+    <message>
+        <source>Status: %1</source>
+        <translation>状态：%1</translation>
+    </message>
+    <message>
+        <source>Details:</source>
+        <translation>详情：</translation>
+    </message>
+    <message>
+        <source>
+Type: %1</source>
+        <translation>
+类型：%1</translation>
+    </message>
+    <message>
+        <source>
+Group: %1</source>
+        <translation>
+组：%1</translation>
+    </message>
+    <message>
+        <source>
+Vendor: 0x%1
+Product: 0x%2
+Revision: 0x%3</source>
+        <translation>
+厂商：0x%1
+产品：0x%2
+修订版本：0x%3</translation>
+    </message>
+    <message>
+        <source>
+Drag this ESI device to the active offline EtherCAT Master to append it.</source>
+        <translation>
+将此 ESI 设备拖到活动的离线 EtherCAT 主站以追加该设备。</translation>
+    </message>
+    <message>
+        <source>
+Drop a supported ESI device here to append it to this offline Master.</source>
+        <translation>
+将受支持的 ESI 设备拖放到此处，以追加到此离线主站。</translation>
+    </message>
+    <message>
+        <source>EtherCAT Node</source>
+        <translation>EtherCAT 节点</translation>
+    </message>
+    <message>
+        <source>No ESI devices imported</source>
+        <translation>未导入 ESI 设备</translation>
+    </message>
+    <message>
+        <source>Select Device Repository, then choose Import ESI Files...</source>
+        <translation>选择设备存储库，然后选择“导入 ESI 文件...”</translation>
+    </message>
+    <message>
+        <source>Active · %1</source>
+        <translation>活动 · %1</translation>
+    </message>
+    <message>
+        <source>Available</source>
+        <translation>可用</translation>
+    </message>
+    <message>
+        <source>Import ESI files</source>
+        <translation>导入 ESI 文件</translation>
+    </message>
+    <message>
+        <source>Active project | %1</source>
+        <translation>活动项目 | %1</translation>
+    </message>
+    <message>
+        <source>MOCK</source>
+        <translation>MOCK</translation>
+    </message>
+    <message>
+        <source>Online</source>
+        <translation>在线</translation>
+    </message>
+    <message>
+        <source>%1 | %2 %3 / %4</source>
+        <translation>%1 | %2 %3 / %4</translation>
+    </message>
+    <message>
+        <source>%1 | %2 diagnostics %3: last %4 / %5</source>
+        <translation>%1 | %2 诊断 %3：最近 %4 / %5</translation>
+    </message>
+    <message>
+        <source> - Error</source>
+        <translation> - 错误</translation>
+    </message>
+    <message numerus="yes">
+        <source> - %n active alarm(s)</source>
+        <translation>
+            <numerusform> - %n 个活动告警</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1 %2 · last %3 / %4</source>
+        <translation>%1 %2 · 最近 %3 / %4</translation>
+    </message>
+    <message>
+        <source> · Error</source>
+        <translation> · 错误</translation>
+    </message>
+    <message>
+        <source> · Alarms: %1</source>
+        <translation> · 告警：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 | %2 %3 - %n active alarm(s)</source>
+        <translation>
+            <numerusform>%1 | %2 %3 - %n 个活动告警</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1 %2</source>
+        <translation>%1 %2</translation>
+    </message>
+    <message>
+        <source>%1 not present</source>
+        <translation>%1 不存在</translation>
+    </message>
+    <message>
+        <source>The configured slave is absent from the diagnostics snapshot.</source>
+        <translation>诊断快照中缺少已配置的从站。</translation>
+    </message>
+    <message>
+        <source>%1 | Diagnostics %2</source>
+        <translation>%1 | 诊断 %2</translation>
+    </message>
+    <message>
+        <source>%1 | %2 interface scan</source>
+        <translation>%1 | %2 接口扫描</translation>
+    </message>
+    <message>
+        <source>%1 interface scan</source>
+        <translation>%1 接口扫描</translation>
+    </message>
+    <message>
+        <source>%1 | %2 scan: topology matches</source>
+        <translation>%1 | %2 扫描：拓扑匹配</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 | %2 scan: %n topology difference(s)</source>
+        <translation>
+            <numerusform>%1 | %2 扫描：%n 处拓扑差异</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1 Match</source>
+        <translation>%1 匹配</translation>
+    </message>
+    <message>
+        <source>%1 · Differences: %2</source>
+        <translation>%1 · 差异：%2</translation>
+    </message>
+    <message>
+        <source>%1 scan: %2</source>
+        <translation>%1 扫描：%2</translation>
+    </message>
+    <message>
+        <source>%1 scan: Matched</source>
+        <translation>%1 扫描：已匹配</translation>
+    </message>
+    <message>
+        <source>No EtherCAT project is open</source>
+        <translation>没有打开的 EtherCAT 项目</translation>
+    </message>
+    <message>
+        <source>Create or open an .ecatproject file</source>
+        <translation>创建或打开 .ecatproject 文件</translation>
+    </message>
+    <message>
+        <source>Open/create project</source>
+        <translation>打开/创建项目</translation>
+    </message>
+    <message>
+        <source>Invalid project | Offline data unavailable</source>
+        <translation>项目无效 | 离线数据不可用</translation>
+    </message>
+    <message>
+        <source>Invalid · Offline</source>
+        <translation>无效 · 离线</translation>
+    </message>
+    <message>
+        <source>Project configuration unavailable</source>
+        <translation>项目配置不可用</translation>
+    </message>
+    <message>
+        <source>Fix the project file and reopen it</source>
+        <translation>修复项目文件并重新打开</translation>
+    </message>
+    <message>
+        <source>Fix and reopen</source>
+        <translation>修复并重新打开</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n configured slave(s)</source>
+        <translation>
+            <numerusform>%n 个已配置从站</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Diagnostics</source>
+        <translation>诊断</translation>
+    </message>
+    <message>
+        <source>No configured slaves</source>
+        <translation>没有已配置从站</translation>
+    </message>
+    <message>
+        <source>Device Repository</source>
+        <translation>设备存储库</translation>
+    </message>
+    <message>
+        <source>Offline ESI library</source>
+        <translation>离线 ESI 库</translation>
+    </message>
+    <message>
+        <source>Filter EtherCAT nodes</source>
+        <translation>筛选 EtherCAT 节点</translation>
+    </message>
+    <message>
+        <source>Filter the offline EtherCAT tree by node, status, or identity.</source>
+        <translation type="vanished">按节点、状态或标识筛选离线 EtherCAT 树。</translation>
+    </message>
+    <message>
+        <source>Filter the EtherCAT device tree by device, status, or identity.</source>
+        <translation>按设备、状态或身份筛选 EtherCAT 设备树。</translation>
+    </message>
+    <message>
+        <source>Filter nodes, status, or identity</source>
+        <translation>筛选节点、状态或标识</translation>
+    </message>
+    <message>
+        <source>EtherCAT device tree</source>
+        <translation>EtherCAT 设备树</translation>
+    </message>
+    <message>
+        <source>Browse offline projects, masters, slaves, process data, and ESI devices. Drag a supported ESI device to the active offline Master to append it.</source>
+        <translation type="vanished">浏览离线项目、主站、从站、过程数据和 ESI 设备。将受支持的 ESI 设备拖到活动离线主站以追加该设备。</translation>
+    </message>
+    <message>
+        <source>Browse projects, EtherCAT Masters, and the configured or detected bus devices. Select a node to inspect and configure it in the right panel.</source>
+        <translation>浏览项目、EtherCAT 主站以及已配置或已检测的总线设备。选择节点后可在右侧面板查看和配置。</translation>
+    </message>
+    <message>
+        <source>No matching EtherCAT nodes</source>
+        <translation>没有匹配的 EtherCAT 节点</translation>
+    </message>
+    <message>
+        <source>No offline EtherCAT tree nodes match the current filter.</source>
+        <translation type="vanished">没有离线 EtherCAT 树节点与当前筛选条件匹配。</translation>
+    </message>
+    <message>
+        <source>No EtherCAT device tree nodes match the current filter.</source>
+        <translation>当前筛选条件没有匹配的 EtherCAT 设备树节点。</translation>
+    </message>
+    <message>
+        <source>No EtherCAT nodes match the current filter.</source>
+        <translation>没有 EtherCAT 节点与当前筛选条件匹配。</translation>
+    </message>
+    <message>
+        <source>Clear Filter</source>
+        <translation>清除筛选条件</translation>
+    </message>
+    <message>
+        <source>Clear the navigation filter and return to the offline EtherCAT tree.</source>
+        <translation type="vanished">清除导航筛选条件并返回离线 EtherCAT 树。</translation>
+    </message>
+    <message>
+        <source>Clear the navigation filter and return to the EtherCAT device tree.</source>
+        <translation>清除导航筛选条件并返回 EtherCAT 设备树。</translation>
+    </message>
+    <message>
+        <source>EtherCAT Devices</source>
+        <translation>EtherCAT 设备</translation>
+    </message>
+    <message>
+        <source>EtherCAT Device</source>
+        <translation>EtherCAT 设备</translation>
+    </message>
+    <message>
+        <source>%1 (%2)</source>
+        <translation>%1（%2）</translation>
+    </message>
+    <message>
+        <source>The controller session has not been established.</source>
+        <translation>尚未建立控制器会话。</translation>
+    </message>
+    <message>
+        <source>Acquire the controller control lease first.</source>
+        <translation>请先获取控制器控制租约。</translation>
+    </message>
+    <message>
+        <source>The controller state is unavailable.</source>
+        <translation>控制器状态不可用。</translation>
+    </message>
+    <message>
+        <source>The controller is not ready for control commands.</source>
+        <translation>控制器尚未就绪，无法执行控制命令。</translation>
+    </message>
+    <message>
+        <source>The active controller package is not ready for this session.</source>
+        <translation>活动控制器软件包尚未为当前会话就绪。</translation>
+    </message>
+    <message>
+        <source>No controller control operation is selected.</source>
+        <translation>未选择控制器控制操作。</translation>
+    </message>
+    <message>
+        <source>This session already owns the controller control lease.</source>
+        <translation>当前会话已持有控制器控制租约。</translation>
+    </message>
+    <message>
+        <source>The controller control lease is owned by another session.</source>
+        <translation>控制器控制租约已由另一会话持有。</translation>
+    </message>
+    <message>
+        <source>The controller control lease ownership is unverified for this session.</source>
+        <translation>当前会话的控制器控制租约归属尚未验证。</translation>
+    </message>
+    <message>
+        <source>Stop the controller in OP_SAFE or Shutdown before releasing control.</source>
+        <translation>释放控制权前，请先将控制器停止到 OP_SAFE 或 Shutdown 状态。</translation>
+    </message>
+    <message>
+        <source>The controller service state does not allow configuration mode.</source>
+        <translation>当前控制器服务状态不允许进入配置模式。</translation>
+    </message>
+    <message>
+        <source>The controller package state is unavailable.</source>
+        <translation>控制器软件包状态不可用。</translation>
+    </message>
+    <message>
+        <source>Deactivate the controller package before scanning the bus.</source>
+        <translation>扫描总线前，请先停用控制器软件包。</translation>
+    </message>
+    <message>
+        <source>The controller must be in Shutdown before scanning the bus.</source>
+        <translation>扫描总线前，控制器必须处于 Shutdown 状态。</translation>
+    </message>
+    <message>
+        <source>No restorable active controller package is available.</source>
+        <translation>没有可恢复的活动控制器软件包。</translation>
+    </message>
+    <message>
+        <source>Restore is available only in OP_SAFE or Shutdown.</source>
+        <translation>仅当控制器处于 OP_SAFE 或 Shutdown 状态时才可恢复。</translation>
+    </message>
+    <message>
+        <source>The controller must be in OP_SAFE before starting.</source>
+        <translation>启动前，控制器必须处于 OP_SAFE 状态。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT bus has not reached Operational state.</source>
+        <translation>EtherCAT 总线尚未达到 Operational（OP）状态。</translation>
+    </message>
+    <message>
+        <source>The expected EtherCAT working counter is unavailable.</source>
+        <translation>预期的 EtherCAT 工作计数器不可用。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT working counter does not match its expected value.</source>
+        <translation>EtherCAT 工作计数器与预期值不匹配。</translation>
+    </message>
+    <message>
+        <source>Clear current and latched controller faults before starting.</source>
+        <translation>启动前，请清除控制器的当前故障和锁存故障。</translation>
+    </message>
+    <message>
+        <source>Pause is available only while the controller is Running.</source>
+        <translation>仅当控制器处于 Running 状态时才可暂停。</translation>
+    </message>
+    <message>
+        <source>Resume is available only while the controller is Paused.</source>
+        <translation>仅当控制器处于 Paused 状态时才可恢复运行。</translation>
+    </message>
+    <message>
+        <source>Clear current and latched controller faults before resuming.</source>
+        <translation>恢复运行前，请清除控制器的当前故障和锁存故障。</translation>
+    </message>
+    <message>
+        <source>Controlled Stop is available only while Running or Paused.</source>
+        <translation>仅当控制器处于 Running 或 Paused 状态时才可受控停止。</translation>
+    </message>
+    <message>
+        <source>The controller service state does not allow this operation.</source>
+        <translation>当前控制器服务状态不允许执行此操作。</translation>
+    </message>
+    <message>
+        <source>idle</source>
+        <translation>空闲</translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>未知</translation>
+    </message>
+    <message>
+        <source>Controller</source>
+        <translation>控制器</translation>
+    </message>
+    <message>
+        <source>Endpoint %1</source>
+        <translation>端点 %1</translation>
+    </message>
+    <message>
+        <source>Exclusive control acquired</source>
+        <translation>已取得独占控制权</translation>
+    </message>
+    <message>
+        <source>Control lease owner %1</source>
+        <translation>控制租约所有者 %1</translation>
+    </message>
+    <message>
+        <source>Control lease not acquired</source>
+        <translation>未取得控制租约</translation>
+    </message>
+    <message>
+        <source>Service %1</source>
+        <translation>服务 %1</translation>
+    </message>
+    <message>
+        <source>WKC %1/%2</source>
+        <translation>WKC %1/%2</translation>
+    </message>
+    <message>
+        <source> (%1)</source>
+        <translation>（%1）</translation>
+    </message>
+    <message>
+        <source>Bus scan %1 responding, %2 listed</source>
+        <translation>总线扫描：%1 个设备响应，列出 %2 个</translation>
+    </message>
+    <message>
+        <source>Error: %1</source>
+        <translation>错误：%1</translation>
+    </message>
+    <message>
+        <source>Cannot drop the ESI device: %1</source>
+        <translation>无法拖放 ESI 设备：%1</translation>
+    </message>
+    <message>
+        <source>Automatic controller cleanup stopped safely because the controller adapter was removed. The connection was not reported as disconnected.</source>
+        <translation>自动控制器清理已安全停止，因为控制器适配器已被移除。未将该连接报告为已断开。</translation>
+    </message>
+    <message>
+        <source>Select a valid EtherCAT Master before editing its endpoint.</source>
+        <translation>请先选择有效的 EtherCAT 主站，再编辑其端点。</translation>
+    </message>
+    <message>
+        <source>Disconnect the current controller session before changing its endpoint.</source>
+        <translation>请先断开当前控制器会话，再更改其端点。</translation>
+    </message>
+    <message>
+        <source>Select the connection profile before changing its endpoint.</source>
+        <translation>请先选择连接配置，再更改其端点。</translation>
+    </message>
+    <message>
+        <source>The requested EtherCAT Master is not available in an open project.</source>
+        <translation>请求的 EtherCAT 主站不在任何已打开的项目中。</translation>
+    </message>
+    <message>
+        <source>Select a controller adapter for the active EtherCAT Master.</source>
+        <translation>请为活动 EtherCAT 主站选择控制器适配器。</translation>
+    </message>
+    <message>
+        <source>The selected controller adapter is not available.</source>
+        <translation>所选控制器适配器不可用。</translation>
+    </message>
+    <message>
+        <source>Select a controller connection profile for the active EtherCAT Master.</source>
+        <translation>请为活动 EtherCAT 主站选择控制器连接配置。</translation>
+    </message>
+    <message>
+        <source>The connected controller does not support this control operation.</source>
+        <translation>已连接的控制器不支持此控制操作。</translation>
+    </message>
+    <message>
+        <source>Connect the controller before using controller run controls.</source>
+        <translation>使用控制器运行控件前，请先连接控制器。</translation>
+    </message>
+    <message>
+        <source>The connected controller session belongs to a different EtherCAT Master.</source>
+        <translation>已连接的控制器会话属于另一 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>The connected controller session uses a different connection profile.</source>
+        <translation>已连接的控制器会话使用了另一连接配置。</translation>
+    </message>
+    <message>
+        <source>Controller run controls are unavailable for a Mock connection.</source>
+        <translation>Mock 连接不能使用控制器运行控件。</translation>
+    </message>
+    <message>
+        <source>The controller connection is read-only.</source>
+        <translation>控制器连接为只读。</translation>
+    </message>
+    <message>
+        <source>Wait for the current controller control operation to finish.</source>
+        <translation>请等待当前控制器控制操作完成。</translation>
+    </message>
+    <message>
+        <source>Run is available only while the controller is in OP_SAFE or Paused.</source>
+        <translation>仅当控制器处于 OP_SAFE 或 Paused 状态时才可运行。</translation>
+    </message>
+    <message>
+        <source>Pause or Resume is available only while the controller is Running or Paused.</source>
+        <translation>仅当控制器处于 Running 或 Paused 状态时才可暂停或恢复运行。</translation>
+    </message>
+    <message>
+        <source>Controlled Stop is available only while the controller is Running or Paused.</source>
+        <translation>仅当控制器处于 Running 或 Paused 状态时才可受控停止。</translation>
+    </message>
+    <message>
+        <source>The offline topology services are unavailable.</source>
+        <translation>离线拓扑服务不可用。</translation>
+    </message>
+    <message>
+        <source>The displayed active offline master is no longer current. Review the updated target and try again.</source>
+        <translation>当前显示的活动离线主站已不是最新状态。请检查更新后的目标并重试。</translation>
+    </message>
+    <message>
+        <source>Select an ESI device before adding it.</source>
+        <translation>请先选择 ESI 设备，然后再添加。</translation>
+    </message>
+    <message>
+        <source>The selected offline EtherCAT Master is unavailable.</source>
+        <translation>所选离线 EtherCAT 主站不可用。</translation>
+    </message>
+    <message>
+        <source>The selected ESI device is no longer available.</source>
+        <translation>所选 ESI 设备已不可用。</translation>
+    </message>
+    <message>
+        <source>The selected ESI device has unsupported structures and cannot be added.</source>
+        <translation>所选 ESI 设备包含不受支持的结构，无法添加。</translation>
+    </message>
+    <message>
+        <source>The selected offline slave changed while confirmation was open; nothing was removed.</source>
+        <translation>确认窗口打开期间，所选离线从站发生了变化；未移除任何内容。</translation>
+    </message>
+    <message>
+        <source>The offline slave is no longer available; nothing was removed.</source>
+        <translation>离线从站已不可用；未移除任何内容。</translation>
+    </message>
+    <message>
+        <source>The offline slave configuration changed while confirmation was open; nothing was removed. Confirm the current configuration again.</source>
+        <translation>确认窗口打开期间，离线从站配置发生了变化；未移除任何内容。请重新确认当前配置。</translation>
+    </message>
+    <message>
+        <source>The selected offline slave cannot move up.</source>
+        <translation>所选离线从站无法上移。</translation>
+    </message>
+    <message>
+        <source>The selected offline slave cannot move down.</source>
+        <translation>所选离线从站无法下移。</translation>
+    </message>
+    <message>
+        <source>The offline project service is unavailable.</source>
+        <translation>离线项目服务不可用。</translation>
+    </message>
+    <message>
+        <source>Select an open EtherCAT project first.</source>
+        <translation>请先选择一个已打开的 EtherCAT 项目。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project is invalid and cannot be activated.</source>
+        <translation>所选 EtherCAT 项目无效，无法激活。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project is already active.</source>
+        <translation>所选 EtherCAT 项目已处于活动状态。</translation>
+    </message>
+    <message>
+        <source>Offline slave name cannot be empty.</source>
+        <translation>离线从站名称不能为空。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project is not available.</source>
+        <translation>EtherCAT 项目不可用。</translation>
+    </message>
+    <message>
+        <source>The offline slave is not available.</source>
+        <translation>离线从站不可用。</translation>
+    </message>
+    <message>
+        <source>The offline slave is not part of its EtherCAT master.</source>
+        <translation>此离线从站不属于相应的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Cannot automatically acquire controller control: %1</source>
+        <translation>无法自动取得控制器控制权：%1</translation>
+    </message>
+    <message>
+        <source>Cannot automatically scan the EtherCAT bus: %1</source>
+        <translation>无法自动扫描 EtherCAT 总线：%1</translation>
+    </message>
+    <message>
+        <source>The controller adapter instance changed during cleanup.</source>
+        <translation>清理期间控制器适配器实例发生变化。</translation>
+    </message>
+    <message>
+        <source>The controller connection scope or profile changed during cleanup.</source>
+        <translation>清理期间控制器连接范围或连接配置发生变化。</translation>
+    </message>
+    <message>
+        <source>The controller session changed repeatedly during cleanup.</source>
+        <translation>清理期间控制器会话反复变化。</translation>
+    </message>
+    <message>
+        <source>The controller session identity changed without a new generation.</source>
+        <translation>控制器会话标识在未产生新代次的情况下发生变化。</translation>
+    </message>
+    <message>
+        <source>Timed out while waiting for safe controller cleanup.</source>
+        <translation>等待控制器安全清理超时。</translation>
+    </message>
+    <message>
+        <source> Last error: %1</source>
+        <translation> 最后一个错误：%1</translation>
+    </message>
+    <message>
+        <source>The controller adapter does not support the required cleanup command.</source>
+        <translation>控制器适配器不支持清理所需的命令。</translation>
+    </message>
+    <message>
+        <source>The controller adapter repeatedly rejected disconnect.</source>
+        <translation>控制器适配器反复拒绝断开连接。</translation>
+    </message>
+    <message>
+        <source>The controller adapter became unavailable during cleanup.</source>
+        <translation>清理期间控制器适配器变为不可用。</translation>
+    </message>
+    <message>
+        <source>Controlled Stop failed during project cleanup.</source>
+        <translation>项目清理期间受控停止失败。</translation>
+    </message>
+    <message>
+        <source>Configuration mode failed during project cleanup.</source>
+        <translation>项目清理期间进入配置模式失败。</translation>
+    </message>
+    <message>
+        <source>Release control failed during project cleanup.</source>
+        <translation>项目清理期间释放控制权失败。</translation>
+    </message>
+    <message>
+        <source>The controller connection failed before safe cleanup was confirmed.</source>
+        <translation>在确认安全清理之前，控制器连接已失败。</translation>
+    </message>
+    <message>
+        <source>The controller connection entered an unknown cleanup state.</source>
+        <translation>控制器连接进入未知的清理状态。</translation>
+    </message>
+    <message>
+        <source>The controller session identity is unavailable.</source>
+        <translation>控制器会话标识不可用。</translation>
+    </message>
+    <message>
+        <source>The controller session identity is incomplete.</source>
+        <translation>控制器会话标识不完整。</translation>
+    </message>
+    <message>
+        <source>The controller lease ownership snapshot is inconsistent.</source>
+        <translation>控制器控制租约所有权快照不一致。</translation>
+    </message>
+    <message>
+        <source>The controller state is not ready for safe cleanup.</source>
+        <translation>控制器状态尚未准备好进行安全清理。</translation>
+    </message>
+    <message>
+        <source>Automatic controller cleanup stopped safely: %1 The connection remains unchanged and was not reported as disconnected.</source>
+        <translation>自动控制器清理已安全停止：%1 连接保持不变，未将其报告为已断开。</translation>
+    </message>
+    <message>
+        <source>MOCK Ready</source>
+        <translation>MOCK 就绪</translation>
+    </message>
+    <message>
+        <source>MOCK Busy</source>
+        <translation>MOCK 忙碌</translation>
+    </message>
+    <message>
+        <source>MOCK Warning</source>
+        <translation>MOCK 警告</translation>
+    </message>
+    <message>
+        <source>MOCK Fault</source>
+        <translation>MOCK 故障</translation>
+    </message>
+    <message>
+        <source>Diagnostics Ready</source>
+        <translation>诊断就绪</translation>
+    </message>
+    <message>
+        <source>Diagnostics Busy</source>
+        <translation>诊断忙碌</translation>
+    </message>
+    <message>
+        <source>Diagnostics Warning</source>
+        <translation>诊断警告</translation>
+    </message>
+    <message>
+        <source>Diagnostics Fault</source>
+        <translation>诊断故障</translation>
+    </message>
+    <message>
+        <source>INIT</source>
+        <translation>INIT</translation>
+    </message>
+    <message>
+        <source>PREOP</source>
+        <translation>PREOP</translation>
+    </message>
+    <message>
+        <source>SAFEOP</source>
+        <translation>SAFEOP</translation>
+    </message>
+    <message>
+        <source>OP</source>
+        <translation>OP</translation>
+    </message>
+    <message>
+        <source>BOOT</source>
+        <translation>BOOT</translation>
+    </message>
+    <message>
+        <source>%1 %2 / %3</source>
+        <translation>%1 %2 / %3</translation>
+    </message>
+    <message>
+        <source>%1 — Diagnostics %2</source>
+        <translation>%1 — 诊断 %2</translation>
+    </message>
+    <message>
+        <source>%1 — %2</source>
+        <translation>%1 — %2</translation>
+    </message>
+    <message>
+        <source>Local Mock diagnostics only.</source>
+        <translation>仅为本地 Mock 诊断。</translation>
+    </message>
+    <message>
+        <source>Provider-reported diagnostics only.</source>
+        <translation>仅为提供程序报告的诊断。</translation>
+    </message>
+    <message>
+        <source>Local Mock diagnostics only. No controller or physical hardware is connected.</source>
+        <translation type="vanished">仅限本地 Mock 诊断。未连接控制器或物理硬件。</translation>
+    </message>
+    <message>
+        <source>Provider-reported diagnostics only. The Workbench does not infer a controller or physical-hardware connection.</source>
+        <translation type="vanished">仅显示提供程序报告的诊断。Workbench 不会推断控制器或物理硬件连接。</translation>
+    </message>
+    <message>
+        <source>Project: %1</source>
+        <translation>项目：%1</translation>
+    </message>
+    <message>
+        <source>Master: %1</source>
+        <translation>主站：%1</translation>
+    </message>
+    <message>
+        <source>EtherCAT workbench status</source>
+        <translation>EtherCAT Workbench 状态</translation>
+    </message>
+    <message>
+        <source>No local Mock scan or diagnostics workflow is active. No controller is connected.</source>
+        <translation type="vanished">没有活动的本地 Mock 扫描或诊断工作流。未连接控制器。</translation>
+    </message>
+    <message>
+        <source>Diagnostics %1</source>
+        <translation>诊断 %1</translation>
+    </message>
+    <message>
+        <source>Controller %1</source>
+        <translation type="vanished">控制器%1</translation>
+    </message>
+    <message>
+        <source>Mock controller connection</source>
+        <translation type="vanished">Mock 控制器连接</translation>
+    </message>
+    <message>
+        <source>Endpoint: %1</source>
+        <translation type="vanished">端点：%1</translation>
+    </message>
+    <message>
+        <source>EtherCAT</source>
+        <translation>EtherCAT</translation>
+    </message>
+    <message>
+        <source>Run Controller</source>
+        <translation>运行控制器</translation>
+    </message>
+    <message>
+        <source>Pause / Resume Controller</source>
+        <translation>暂停/恢复控制器</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project service is unavailable.</source>
+        <translation>EtherCAT 项目服务不可用。</translation>
+    </message>
+    <message>
+        <source>An open EtherCAT project is not the registered owner of its project ID. Close the conflicting duplicate project or assign it a unique project ID.</source>
+        <translation>某个已打开的 EtherCAT 项目不是其项目 ID 的已注册所有者。请关闭冲突的重复项目，或为其分配唯一的项目 ID。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project is no longer available.</source>
+        <translation>所选 EtherCAT 项目已不可用。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project is invalid. Fix its reported errors before controlling the controller.</source>
+        <translation>所选 EtherCAT 项目无效。请先修复已报告的错误，再控制该控制器。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project must contain exactly one valid Master.</source>
+        <translation>所选 EtherCAT 项目必须且只能包含一个有效主站。</translation>
+    </message>
+    <message>
+        <source>Open a valid EtherCAT project before controlling the controller.</source>
+        <translation>请先打开一个有效的 EtherCAT 项目，再控制该控制器。</translation>
+    </message>
+    <message>
+        <source>Select a node in the EtherCAT project whose controller you want to control.</source>
+        <translation>请在要控制其控制器的 EtherCAT 项目中选择一个节点。</translation>
+    </message>
+    <message>
+        <source>The open EtherCAT project is invalid. Fix its reported errors before controlling the controller.</source>
+        <translation>已打开的 EtherCAT 项目无效。请先修复已报告的错误，再控制该控制器。</translation>
+    </message>
+    <message>
+        <source>The open EtherCAT project must contain exactly one valid Master.</source>
+        <translation>已打开的 EtherCAT 项目必须且只能包含一个有效主站。</translation>
+    </message>
+    <message>
+        <source>The controller run control service is unavailable.</source>
+        <translation>控制器运行控制服务不可用。</translation>
+    </message>
+    <message>
+        <source>Start Controller</source>
+        <translation>启动控制器</translation>
+    </message>
+    <message>
+        <source>Start the active controller package using its configured FreeRun or Distributed Clocks timing mode.</source>
+        <translation>使用活动控制器软件包配置的 FreeRun 或分布式时钟时序模式启动。</translation>
+    </message>
+    <message>
+        <source>Resume Controller</source>
+        <translation>恢复控制器运行</translation>
+    </message>
+    <message>
+        <source>Resume the paused controller application.</source>
+        <translation>恢复已暂停的控制器应用。</translation>
+    </message>
+    <message>
+        <source>Pause Controller</source>
+        <translation>暂停控制器</translation>
+    </message>
+    <message>
+        <source>Pause the running controller application.</source>
+        <translation>暂停正在运行的控制器应用。</translation>
+    </message>
+    <message>
+        <source>Request a controlled stop of the running or paused controller application. This is not an emergency stop.</source>
+        <translation>请求对正在运行或已暂停的控制器应用执行受控停止。此操作不是紧急停止。</translation>
+    </message>
+    <message>
+        <source>Open the EtherCAT Workbench to use controller run controls.</source>
+        <translation>请打开 EtherCAT Workbench 以使用控制器运行控件。</translation>
+    </message>
+    <message>
+        <source>%1 is unavailable: %2</source>
+        <translation>%1 不可用：%2</translation>
+    </message>
+    <message>
+        <source>the active EtherCAT project is invalid. Fix its reported errors before controlling the controller.</source>
+        <translation type="vanished">当前 EtherCAT 项目无效。请先修复已报告的错误，再控制该控制器。</translation>
+    </message>
+    <message>
+        <source>the active EtherCAT project must contain exactly one valid Master.</source>
+        <translation type="vanished">当前 EtherCAT 项目必须且只能包含一个有效主站。</translation>
+    </message>
+    <message>
+        <source>Cannot control the controller: %1</source>
+        <translation>无法控制控制器：%1</translation>
+    </message>
+    <message>
+        <source>Connection: %1</source>
+        <translation>连接：%1</translation>
+    </message>
+    <message>
+        <source>Service: %1</source>
+        <translation>服务：%1</translation>
+    </message>
+    <message>
+        <source>Control: exclusive</source>
+        <translation>控制：独占</translation>
+    </message>
+    <message>
+        <source>Control: owned by another session</source>
+        <translation>控制：由其他会话持有</translation>
+    </message>
+    <message>
+        <source>Control: not acquired</source>
+        <translation>控制：未取得</translation>
+    </message>
+    <message>
+        <source>EtherCAT Controller</source>
+        <translation>EtherCAT 控制器</translation>
+    </message>
+    <message>
+        <source>Open Workbench</source>
+        <translation>打开 Workbench</translation>
+    </message>
+    <message>
+        <source>Refresh</source>
+        <translation>刷新</translation>
+    </message>
+    <message>
+        <source>Connect Controller</source>
+        <translation>连接控制器</translation>
+    </message>
+    <message>
+        <source>Establish the Control, Push, and Bulk channels, read the authoritative controller snapshot, then automatically request the exclusive control lease. Connecting does not scan the bus, change controller state, or write configuration.</source>
+        <translation type="vanished">建立 Control、Push 和 Bulk 通道，读取权威控制器快照，然后自动请求独占控制租约。连接操作不会扫描总线、切换控制器状态或写入配置。</translation>
+    </message>
+    <message>
+        <source>Establish the Control, Push, and Bulk channels, read the authoritative controller snapshot, then automatically request the exclusive control lease. Connecting never scans the bus or changes the controller state; use Rescan explicitly when the physical bus has changed.</source>
+        <translation>建立 Control、Push 和 Bulk 通道，读取权威控制器快照，然后自动请求独占控制租约。连接不会扫描总线或切换控制器状态；物理总线变化后请明确执行“重新扫描”。</translation>
+    </message>
+    <message>
+        <source>Scan the live EtherCAT bus connected to the selected Master. This does not modify the offline project.</source>
+        <translation>扫描连接到所选主站的实际 EtherCAT 总线。此操作不会修改离线项目。</translation>
+    </message>
+    <message>
+        <source>Cannot scan the EtherCAT bus: %1</source>
+        <translation>无法扫描 EtherCAT 总线：%1</translation>
+    </message>
+    <message>
+        <source>Apply Current Bus to Project</source>
+        <translation>将当前总线应用到项目</translation>
+    </message>
+    <message>
+        <source>Replace the selected Master&apos;s local offline device list with the latest live bus scan. Existing parameter, Process Data, Startup, and Distributed Clocks settings are preserved when the same device remains at the same position. Unknown devices require matching ESI XML before detailed configuration is available. This action is undoable and does not write to the controller.</source>
+        <translation>使用最新实际总线扫描结果替换所选主站的本地离线设备列表。同一设备保持在同一位置时，将保留现有参数、过程数据、启动和分布式时钟设置。未知设备需要匹配的 ESI XML 才能进行详细配置。此操作可撤销，且不会写入控制器。</translation>
+    </message>
+    <message>
+        <source>Cannot apply the current bus to the project: %1</source>
+        <translation>无法将当前总线应用到项目：%1</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project is invalid or no longer available.</source>
+        <translation>所选 EtherCAT 项目无效或已不可用。</translation>
+    </message>
+    <message>
+        <source>The current bus scan did not complete successfully.</source>
+        <translation>当前总线扫描未成功完成。</translation>
+    </message>
+    <message>
+        <source>The current bus scan contains no responding EtherCAT devices.</source>
+        <translation>当前总线扫描中没有响应的 EtherCAT 设备。</translation>
+    </message>
+    <message>
+        <source>The current bus scan is incomplete and cannot configure the project.</source>
+        <translation>当前总线扫描结果不完整，无法用于配置项目。</translation>
+    </message>
+    <message>
+        <source>The current bus scan contains an invalid or duplicate position.</source>
+        <translation>当前总线扫描包含无效或重复的位置。</translation>
+    </message>
+    <message>
+        <source>The detected EtherCAT device at bus position %1 has station address 0.</source>
+        <translation>总线位置 %1 的 EtherCAT 设备站地址为 0。</translation>
+    </message>
+    <message>
+        <source>Station address 0x%1 is used by bus positions %2 and %3.</source>
+        <translation>站地址 0x%1 被总线位置 %2 和 %3 重复使用。</translation>
+    </message>
+    <message>
+        <source>A detected EtherCAT device has an incomplete identity.</source>
+        <translation>检测到的 EtherCAT 设备身份信息不完整。</translation>
+    </message>
+    <message>
+        <source>Unknown EtherCAT Device %1</source>
+        <translation>未知 EtherCAT 设备 %1</translation>
+    </message>
+    <message>
+        <source>The EtherCAT Workbench is shutting down.</source>
+        <translation>EtherCAT Workbench 正在关闭。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project or ESI repository service is unavailable.</source>
+        <translation>EtherCAT 项目服务或 ESI 设备库服务不可用。</translation>
+    </message>
+    <message>
+        <source>Wait for the ESI repository update to finish.</source>
+        <translation>请等待 ESI 设备库更新完成。</translation>
+    </message>
+    <message>
+        <source>Select a controller adapter for this EtherCAT Master.</source>
+        <translation>请为此 EtherCAT 主站选择控制器适配器。</translation>
+    </message>
+    <message>
+        <source>Select a controller connection profile for this EtherCAT Master.</source>
+        <translation>请为此 EtherCAT 主站选择控制器连接配置。</translation>
+    </message>
+    <message>
+        <source>Connect and scan this EtherCAT Master before applying the current bus.</source>
+        <translation>应用当前总线前，请先连接并扫描此 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>A Mock topology cannot configure a production EtherCAT project.</source>
+        <translation>Mock 拓扑不能用于配置生产 EtherCAT 项目。</translation>
+    </message>
+    <message>
+        <source>Wait for the current controller operation to finish.</source>
+        <translation>请等待当前控制器操作完成。</translation>
+    </message>
+    <message>
+        <source>Scan the EtherCAT bus before applying it to the project.</source>
+        <translation>应用到项目前，请先扫描 EtherCAT 总线。</translation>
+    </message>
+    <message>
+        <source>The current bus already matches the offline project configuration.</source>
+        <translation>当前总线已与离线项目配置一致。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project no longer has an available Master.</source>
+        <translation>EtherCAT 项目已没有可用的主站。</translation>
+    </message>
+    <message>
+        <source>The current bus or EtherCAT project is no longer available.</source>
+        <translation>当前总线或 EtherCAT 项目已不可用。</translation>
+    </message>
+    <message>
+        <source>Applied the current bus to the offline project: %1 device(s), %2 ESI match(es), %3 unknown device(s), %4 existing configuration(s) preserved, and %5 configuration(s) removed or replaced.</source>
+        <translation>已将当前总线应用到离线项目：共 %1 个设备，%2 个 ESI 匹配，%3 个未知设备，保留 %4 个现有配置，并移除或替换 %5 个配置。</translation>
+    </message>
+    <message numerus="yes">
+        <source> %n device(s) have ambiguous ESI matches.</source>
+        <translation>
+            <numerusform> %n 个设备存在不明确的 ESI 匹配。</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source> %n matching ESI device(s) contain unsupported structures.</source>
+        <translation>
+            <numerusform> %n 个匹配的 ESI 设备包含不受支持的结构。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source> Import matching ESI XML files, then apply the current bus again to enable detailed Process Data, Startup, and Distributed Clocks configuration.</source>
+        <translation> 请导入匹配的 ESI XML 文件，然后再次应用当前总线，以启用详细的过程数据、启动和分布式时钟配置。</translation>
+    </message>
+    <message>
+        <source>Release this session&apos;s management lease and close its connection. An already running autonomous cyclic task continues on the controller.</source>
+        <translation>释放当前会话的管理租约并关闭连接。已经运行的自主周期任务会继续在控制器上执行。</translation>
+    </message>
+    <message>
+        <source>Expand Device Tree</source>
+        <translation>展开设备树</translation>
+    </message>
+    <message>
+        <source>Collapse Device Tree</source>
+        <translation>折叠设备树</translation>
+    </message>
+    <message>
+        <source>Locate First Topology Difference</source>
+        <translation>定位第一处拓扑差异</translation>
+    </message>
+    <message>
+        <source>Locate First Issue</source>
+        <translation>定位第一个问题</translation>
+    </message>
+    <message>
+        <source>Open Diagnostics</source>
+        <translation>打开诊断</translation>
+    </message>
+    <message>
+        <source>Locate Unsupported Device</source>
+        <translation>定位不受支持的设备</translation>
+    </message>
+    <message>
+        <source>Copy Node ID</source>
+        <translation>复制节点 ID</translation>
+    </message>
+    <message>
+        <source>Set as Active Project</source>
+        <translation>设为活动项目</translation>
+    </message>
+    <message>
+        <source>Use this open offline EtherCAT project for Workbench engineering commands. This does not activate a controller configuration.</source>
+        <translation>将此已打开的离线 EtherCAT 项目用于 Workbench 工程命令。此操作不会激活控制器配置。</translation>
+    </message>
+    <message>
+        <source>Cannot set the active EtherCAT project: %1</source>
+        <translation>无法设置活动 EtherCAT 项目：%1</translation>
+    </message>
+    <message>
+        <source>Add New Item...</source>
+        <translation>添加新项...</translation>
+    </message>
+    <message>
+        <source>Add to Active Offline Master</source>
+        <translation>添加到活动离线主站</translation>
+    </message>
+    <message>
+        <source>Add ESI Device to Active Offline Master</source>
+        <translation>将 ESI 设备添加到活动离线主站</translation>
+    </message>
+    <message>
+        <source>Cannot add the ESI device: activate a valid offline EtherCAT project.</source>
+        <translation>无法添加 ESI 设备：请激活有效的离线 EtherCAT 项目。</translation>
+    </message>
+    <message>
+        <source>Cannot add the ESI device: %1</source>
+        <translation>无法添加 ESI 设备：%1</translation>
+    </message>
+    <message>
+        <source>Remove from Offline Master...</source>
+        <translation>从离线主站移除...</translation>
+    </message>
+    <message>
+        <source>Remove the selected slave and its offline Process Data, Startup, and Distributed Clocks configuration after confirmation.</source>
+        <translation>确认后移除所选从站及其离线过程数据、启动配置和分布式时钟配置。</translation>
+    </message>
+    <message>
+        <source>Cannot remove the offline slave: select a configured offline slave.</source>
+        <translation>无法移除离线从站：请选择已配置的离线从站。</translation>
+    </message>
+    <message>
+        <source>Remove Offline Slave</source>
+        <translation>移除离线从站</translation>
+    </message>
+    <message>
+        <source>Remove &quot;%1&quot; (position %2) from the offline EtherCAT Master?</source>
+        <translation>是否从离线 EtherCAT 主站移除 &quot;%1&quot;（位置 %2）？</translation>
+    </message>
+    <message>
+        <source>Its offline Process Data, Startup, and Distributed Clocks configuration will also be removed. You can undo this change.</source>
+        <translation>其离线过程数据、启动配置和分布式时钟配置也将被移除。您可以撤销此更改。</translation>
+    </message>
+    <message>
+        <source>Cannot remove the offline slave: %1</source>
+        <translation>无法移除离线从站：%1</translation>
+    </message>
+    <message>
+        <source>Move Offline Slave Up</source>
+        <translation>上移离线从站</translation>
+    </message>
+    <message>
+        <source>Cannot move the offline slave up: %1</source>
+        <translation>无法上移离线从站：%1</translation>
+    </message>
+    <message>
+        <source>Move Offline Slave Down</source>
+        <translation>下移离线从站</translation>
+    </message>
+    <message>
+        <source>Cannot move the offline slave down: %1</source>
+        <translation>无法下移离线从站：%1</translation>
+    </message>
+    <message>
+        <source>Add to &quot;%1&quot; / &quot;%2&quot;</source>
+        <translation>添加到 &quot;%1&quot; / &quot;%2&quot;</translation>
+    </message>
+    <message>
+        <source>Add the selected supported ESI device to offline master &quot;%1&quot; in active project &quot;%2&quot;. This changes only the local offline project; no controller or hardware is contacted.</source>
+        <translation>将所选受支持的 ESI 设备添加到活动项目 &quot;%2&quot; 的离线主站 &quot;%1&quot;。此操作仅更改本地离线项目；不会连接控制器或硬件。</translation>
+    </message>
+    <message>
+        <source>Activate a valid offline EtherCAT project before adding an ESI device. This action changes only a local offline project; it does not contact a controller or hardware.</source>
+        <translation>添加 ESI 设备前，请先激活有效的离线 EtherCAT 项目。此操作仅更改本地离线项目；不会连接控制器或硬件。</translation>
+    </message>
+    <message>
+        <source>Built-in EtherCAT pages</source>
+        <translation>内置 EtherCAT 页面</translation>
+    </message>
+    <message>
+        <source>General</source>
+        <translation>常规</translation>
+    </message>
+    <message>
+        <source>Device Descriptions</source>
+        <translation>设备描述</translation>
+    </message>
+    <message>
+        <source>Process Data</source>
+        <translation>过程数据</translation>
+    </message>
+    <message>
+        <source>CoE Online</source>
+        <translation>CoE 在线</translation>
+    </message>
+    <message>
+        <source>Startup</source>
+        <translation>启动配置</translation>
+    </message>
+    <message>
+        <source>Online data is unavailable. No Diagnostics Provider is registered. V1 provides only local Mock diagnostics and contains no controller protocol.</source>
+        <translation>在线数据不可用。未注册诊断提供程序。V1 仅提供本地 Mock 诊断，不包含控制器协议。</translation>
+    </message>
+    <message>
+        <source>Online data is unavailable. %1 is registered but unavailable. This V1 stage contains no controller protocol.</source>
+        <translation>在线数据不可用。%1 已注册但不可用。当前 V1 阶段不包含控制器协议。</translation>
+    </message>
+    <message>
+        <source>%1 is available, but no Online page is active for this selection. No controller protocol is inferred.</source>
+        <translation>%1 可用，但此选择没有活动的在线页面。不会据此推断存在控制器协议。</translation>
+    </message>
+    <message>
+        <source>No Diagnostics Provider is registered. V1 provides only local Mock diagnostics; Workbench produces no WKC, DC, link, alarm, or live controller state.</source>
+        <translation>未注册诊断提供程序。V1 仅提供本地 Mock 诊断；Workbench 不会生成 WKC、DC、链路、告警或实时控制器状态。</translation>
+    </message>
+    <message>
+        <source>%1 is registered but unavailable. Workbench produces no WKC, DC, link, alarm, or live controller state.</source>
+        <translation>%1 已注册但不可用。Workbench 不会生成 WKC、DC、链路、告警或实时控制器状态。</translation>
+    </message>
+    <message>
+        <source>%1 is available, but no Diagnostics page is active for this selection. No controller or hardware state is inferred.</source>
+        <translation>%1 可用，但此选择没有活动的诊断页面。不会据此推断控制器或硬件状态。</translation>
+    </message>
+    <message>
+        <source>No Diagnostics Provider is registered. V1 diagnostics are local Mock only; no controller connection or hardware state is represented.</source>
+        <translation>未注册诊断提供程序。V1 诊断仅限本地 Mock；不表示控制器连接或硬件状态。</translation>
+    </message>
+    <message>
+        <source>%1 is registered but unavailable. No controller or hardware state is available.</source>
+        <translation>%1 已注册但不可用。没有可用的控制器或硬件状态。</translation>
+    </message>
+    <message>
+        <source>%1 is available but does not provide a Diagnostics page for this selection. No controller or hardware state is inferred.</source>
+        <translation>%1 可用，但未针对此选择提供诊断页面。不会据此推断控制器或硬件状态。</translation>
+    </message>
+    <message>
+        <source>EtherCAT Workbench details</source>
+        <translation>EtherCAT Workbench 详情</translation>
+    </message>
+    <message>
+        <source>Current EtherCAT Workbench selection</source>
+        <translation>当前 EtherCAT Workbench 选择</translation>
+    </message>
+    <message>
+        <source>EtherCAT Workbench guidance</source>
+        <translation>EtherCAT Workbench 指引</translation>
+    </message>
+    <message>
+        <source>EtherCAT property pages</source>
+        <translation>EtherCAT 属性页面</translation>
+    </message>
+    <message>
+        <source>EtherCAT Workbench</source>
+        <translation>EtherCAT Workbench</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT node in the tree to inspect its offline details.</source>
+        <translation type="vanished">在树中选择 EtherCAT 节点以查看其离线详情。</translation>
+    </message>
+    <message>
+        <source>No EtherCAT project is open. Create or open an EtherCAT project (.ecatproject), or select Device Repository to inspect local ESI descriptions.</source>
+        <translation type="vanished">没有打开的 EtherCAT 项目。请创建或打开 EtherCAT 项目（.ecatproject），或选择设备存储库以查看本地 ESI 描述。</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT node in the tree to inspect and configure it.</source>
+        <translation>在树中选择 EtherCAT 节点以查看和配置。</translation>
+    </message>
+    <message>
+        <source>No EtherCAT project is open. Create or open an EtherCAT project (.ecatproject).</source>
+        <translation>没有打开的 EtherCAT 项目。请创建或打开 EtherCAT 项目（.ecatproject）。</translation>
+    </message>
+    <message>
+        <source>No property page provider supports this node.</source>
+        <translation>没有属性页面提供程序支持此节点。</translation>
+    </message>
+    <message>
+        <source>EtherCAT Engineering Commands</source>
+        <translation>EtherCAT 工程命令</translation>
+    </message>
+    <message>
+        <source>EtherCAT engineering commands</source>
+        <translation>EtherCAT 工程命令</translation>
+    </message>
+    <message>
+        <source>Commands registered by the available EtherCAT plugins.</source>
+        <translation>由可用 EtherCAT 插件注册的命令。</translation>
+    </message>
+    <message>
+        <source>Unassigned outputs</source>
+        <translation>未分配的输出</translation>
+    </message>
+    <message>
+        <source>Unassigned inputs</source>
+        <translation>未分配的输入</translation>
+    </message>
+    <message>
+        <source>%1 after %2 ms</source>
+        <translation type="vanished">%1，%2 毫秒后</translation>
+    </message>
+    <message>
+        <source>%1 ms</source>
+        <translation>%1 毫秒</translation>
+    </message>
+    <message>
+        <source>%1 ns</source>
+        <translation>%1 纳秒</translation>
+    </message>
+    <message>
+        <source>%1 — the controller adapter is unavailable.</source>
+        <translation type="vanished">%1 — 控制器适配器不可用。</translation>
+    </message>
+    <message>
+        <source>%1 — unavailable</source>
+        <translation>%1 — 不可用</translation>
+    </message>
+    <message>
+        <source>%1, generation %2</source>
+        <translation>%1，第 %2 代</translation>
+    </message>
+    <message>
+        <source>Active package</source>
+        <translation>活动包</translation>
+    </message>
+    <message>
+        <source>Adapter</source>
+        <translation>适配器</translation>
+    </message>
+    <message>
+        <source>Application active</source>
+        <translation>应用程序活动</translation>
+    </message>
+    <message>
+        <source>Boot ID</source>
+        <translation>启动 ID</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>启动</translation>
+    </message>
+    <message>
+        <source>Bus operational</source>
+        <translation>总线处于 OP</translation>
+    </message>
+    <message>
+        <source>Cannot connect to the controller: %1</source>
+        <translation>无法连接控制器：%1</translation>
+    </message>
+    <message>
+        <source>Cannot disconnect from the controller: %1</source>
+        <translation>无法断开控制器：%1</translation>
+    </message>
+    <message>
+        <source>Cannot refresh the controller snapshot: %1</source>
+        <translation>无法刷新控制器快照：%1</translation>
+    </message>
+    <message>
+        <source>Channel: %1</source>
+        <translation type="vanished">通道：%1</translation>
+    </message>
+    <message>
+        <source>Channel</source>
+        <translation>通道</translation>
+    </message>
+    <message>
+        <source>Code: %1</source>
+        <translation type="vanished">代码：%1</translation>
+    </message>
+    <message>
+        <source>Configuring</source>
+        <translation>正在配置</translation>
+    </message>
+    <message>
+        <source>Confirmed</source>
+        <translation>已确认</translation>
+    </message>
+    <message>
+        <source>Connected at</source>
+        <translation>连接时间</translation>
+    </message>
+    <message>
+        <source>Connecting</source>
+        <translation>正在连接</translation>
+    </message>
+    <message>
+        <source>Connection profile:</source>
+        <translation>连接配置：</translation>
+    </message>
+    <message>
+        <source>Controller IP:</source>
+        <translation type="vanished">控制器 IP：</translation>
+    </message>
+    <message>
+        <source>Controller address:</source>
+        <translation>控制器地址：</translation>
+    </message>
+    <message>
+        <source>Connection profile</source>
+        <translation>连接配置</translation>
+    </message>
+    <message>
+        <source>Controller IP address</source>
+        <translation type="vanished">控制器 IP 地址</translation>
+    </message>
+    <message>
+        <source>Controller address</source>
+        <translation>控制器地址</translation>
+    </message>
+    <message>
+        <source>Save controller IP address</source>
+        <translation type="vanished">保存控制器 IP 地址</translation>
+    </message>
+    <message>
+        <source>Save the controller IP address or base endpoint.</source>
+        <translation type="vanished">保存控制器 IP 地址或基础端点。</translation>
+    </message>
+    <message>
+        <source>Enter an IPv4 address or IPv4:basePort. Push and Bulk use the next two ports.</source>
+        <translation type="vanished">输入 IPv4 地址或 IPv4:基础端口。Push 和 Bulk 使用后续两个端口。</translation>
+    </message>
+    <message>
+        <source>Cannot save the controller endpoint: %1</source>
+        <translation type="vanished">无法保存控制器端点：%1</translation>
+    </message>
+    <message>
+        <source>Controller endpoint saved.</source>
+        <translation type="vanished">已保存控制器端点。</translation>
+    </message>
+    <message>
+        <source>Controller endpoint saved: %1</source>
+        <translation type="vanished">已保存控制器端点：%1</translation>
+    </message>
+    <message>
+        <source>Save controller IP address and connect</source>
+        <translation type="vanished">保存控制器 IP 并连接</translation>
+    </message>
+    <message>
+        <source>Save the controller IP address, then connect and scan automatically.</source>
+        <translation type="vanished">保存控制器 IP 地址，然后自动连接并扫描总线。</translation>
+    </message>
+    <message>
+        <source>Save controller address and connect</source>
+        <translation>保存控制器地址并连接</translation>
+    </message>
+    <message>
+        <source>Save the controller address and connect. Rescan the bus explicitly when needed.</source>
+        <translation>保存控制器地址并连接。需要时请明确执行总线重新扫描。</translation>
+    </message>
+    <message>
+        <source>Enter only the IPv4 controller address. Control, Push, and Bulk always use ports 15200, 15201, and 15202.</source>
+        <translation type="vanished">仅输入控制器 IPv4 地址。Control、Push 和 Bulk 始终使用端口 15200、15201 和 15202。</translation>
+    </message>
+    <message>
+        <source>Enter the controller address required by the selected adapter.</source>
+        <translation>请输入所选适配器要求的控制器地址。</translation>
+    </message>
+    <message>
+        <source>Cannot save the controller IP address: %1</source>
+        <translation type="vanished">无法保存控制器 IP 地址：%1</translation>
+    </message>
+    <message>
+        <source>Controller IP address saved.</source>
+        <translation type="vanished">控制器 IP 地址已保存。</translation>
+    </message>
+    <message>
+        <source>Controller IP address saved: %1</source>
+        <translation type="vanished">控制器 IP 地址已保存：%1</translation>
+    </message>
+    <message>
+        <source>Cannot save the controller address: %1</source>
+        <translation>无法保存控制器地址：%1</translation>
+    </message>
+    <message>
+        <source>Controller address saved.</source>
+        <translation>控制器地址已保存。</translation>
+    </message>
+    <message>
+        <source>Controller address saved: %1</source>
+        <translation>控制器地址已保存：%1</translation>
+    </message>
+    <message>
+        <source>Control lease owner</source>
+        <translation>控制租约所有者</translation>
+    </message>
+    <message>
+        <source>Controller adapter:</source>
+        <translation>控制器适配器：</translation>
+    </message>
+    <message>
+        <source>Controller adapter</source>
+        <translation>控制器适配器</translation>
+    </message>
+    <message>
+        <source>Controller communication channels</source>
+        <translation>控制器通信通道</translation>
+    </message>
+    <message>
+        <source>Controller communication</source>
+        <translation>控制器通信</translation>
+    </message>
+    <message>
+        <source>Controller connection error</source>
+        <translation type="vanished">控制器连接错误</translation>
+    </message>
+    <message>
+        <source>Controller connection summary</source>
+        <translation>控制器连接摘要</translation>
+    </message>
+    <message>
+        <source>Controller state</source>
+        <translation>控制器状态</translation>
+    </message>
+    <message>
+        <source>Current faults</source>
+        <translation>当前故障</translation>
+    </message>
+    <message>
+        <source>DC difference</source>
+        <translation>DC 偏差</translation>
+    </message>
+    <message>
+        <source>Default lease duration</source>
+        <translation>默认租约时长</translation>
+    </message>
+    <message>
+        <source>Degraded</source>
+        <translation>已降级</translation>
+    </message>
+    <message>
+        <source>Disconnect Controller</source>
+        <translation>断开控制器</translation>
+    </message>
+    <message>
+        <source>Disconnect the current controller session before changing its adapter.</source>
+        <translation>更改适配器前，请先断开当前控制器会话。</translation>
+    </message>
+    <message>
+        <source>Disconnect the current controller session before changing its profile.</source>
+        <translation>更改连接配置前，请先断开当前控制器会话。</translation>
+    </message>
+    <message>
+        <source>Disconnected</source>
+        <translation>已断开</translation>
+    </message>
+    <message>
+        <source>Disconnecting</source>
+        <translation>正在断开</translation>
+    </message>
+    <message>
+        <source>Distributed clocks locked</source>
+        <translation>分布式时钟已锁定</translation>
+    </message>
+    <message>
+        <source>Do not retry automatically</source>
+        <translation type="vanished">不要自动重试</translation>
+    </message>
+    <message>
+        <source>Endpoint:</source>
+        <translation>端点：</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>证据</translation>
+    </message>
+    <message>
+        <source>Fault</source>
+        <translation>故障</translation>
+    </message>
+    <message>
+        <source>Firmware generation</source>
+        <translation>固件代次</translation>
+    </message>
+    <message>
+        <source>Firmware slot</source>
+        <translation>固件插槽</translation>
+    </message>
+    <message>
+        <source>Firmware state</source>
+        <translation>固件状态</translation>
+    </message>
+    <message>
+        <source>Handshaking</source>
+        <translation>正在握手</translation>
+    </message>
+    <message>
+        <source>Last activity</source>
+        <translation>最近活动</translation>
+    </message>
+    <message>
+        <source>Last heartbeat</source>
+        <translation>最近心跳</translation>
+    </message>
+    <message>
+        <source>Latched faults</source>
+        <translation>锁存故障</translation>
+    </message>
+    <message>
+        <source>Master ID</source>
+        <translation>主站 ID</translation>
+    </message>
+    <message>
+        <source>Maximum payload</source>
+        <translation>最大载荷</translation>
+    </message>
+    <message>
+        <source>No live controller evidence</source>
+        <translation>无实时控制器证据</translation>
+    </message>
+    <message>
+        <source>No retry guidance</source>
+        <translation type="vanished">无重试建议</translation>
+    </message>
+    <message>
+        <source>Not negotiated</source>
+        <translation>未协商</translation>
+    </message>
+    <message>
+        <source>Operational safe</source>
+        <translation>OP 安全</translation>
+    </message>
+    <message>
+        <source>Owns control lease</source>
+        <translation>持有控制租约</translation>
+    </message>
+    <message>
+        <source>Paused</source>
+        <translation>已暂停</translation>
+    </message>
+    <message>
+        <source>Project ID</source>
+        <translation>项目 ID</translation>
+    </message>
+    <message>
+        <source>Read-only real controller</source>
+        <translation type="vanished">真实控制器（只读）</translation>
+    </message>
+    <message>
+        <source>Read-only</source>
+        <translation>只读</translation>
+    </message>
+    <message>
+        <source>Ready to reboot</source>
+        <translation>可重启</translation>
+    </message>
+    <message>
+        <source>Real controller</source>
+        <translation>真实控制器</translation>
+    </message>
+    <message>
+        <source>Receiving</source>
+        <translation>正在接收</translation>
+    </message>
+    <message>
+        <source>Reconnect before retrying</source>
+        <translation type="vanished">重连后再重试</translation>
+    </message>
+    <message>
+        <source>Recovering</source>
+        <translation>正在恢复</translation>
+    </message>
+    <message>
+        <source>Recovery: %1</source>
+        <translation type="vanished">恢复建议：%1</translation>
+    </message>
+    <message>
+        <source>Refresh Controller Snapshot</source>
+        <translation>刷新控制器快照</translation>
+    </message>
+    <message>
+        <source>Refresh the read-only state snapshot for the controller connected to the selected EtherCAT Master.</source>
+        <translation>刷新连接到所选 EtherCAT 主站的控制器只读状态快照。</translation>
+    </message>
+    <message>
+        <source>Rejected</source>
+        <translation>已拒绝</translation>
+    </message>
+    <message>
+        <source>Retry is allowed</source>
+        <translation type="vanished">可以重试</translation>
+    </message>
+    <message>
+        <source>Rolled back</source>
+        <translation>已回滚</translation>
+    </message>
+    <message>
+        <source>Safe operational</source>
+        <translation>安全运行</translation>
+    </message>
+    <message>
+        <source>Safe output</source>
+        <translation>安全输出</translation>
+    </message>
+    <message>
+        <source>Select a connection profile...</source>
+        <translation>选择连接配置...</translation>
+    </message>
+    <message>
+        <source>Select a connection profile.</source>
+        <translation type="vanished">请选择连接配置。</translation>
+    </message>
+    <message>
+        <source>Select a controller adapter before selecting a profile.</source>
+        <translation>选择连接配置前，请先选择控制器适配器。</translation>
+    </message>
+    <message>
+        <source>Select a controller adapter...</source>
+        <translation>选择控制器适配器...</translation>
+    </message>
+    <message>
+        <source>Select a controller adapter.</source>
+        <translation type="vanished">请选择控制器适配器。</translation>
+    </message>
+    <message>
+        <source>Select a valid EtherCAT Master before connecting.</source>
+        <translation>连接前，请先选择有效的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Select a valid EtherCAT Master.</source>
+        <translation type="vanished">请选择有效的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Select the connected EtherCAT Master first.</source>
+        <translation>请先选择已连接的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Session ID</source>
+        <translation>会话 ID</translation>
+    </message>
+    <message>
+        <source>Session generation</source>
+        <translation>会话代次</translation>
+    </message>
+    <message>
+        <source>Shows engineering properties and available controller communication for the EtherCAT node selected in the device tree.</source>
+        <translation>显示设备树中所选 EtherCAT 节点的工程属性及可用控制器通信。</translation>
+    </message>
+    <message>
+        <source>Shutdown</source>
+        <translation>关停</translation>
+    </message>
+    <message>
+        <source>Slot A</source>
+        <translation>插槽 A</translation>
+    </message>
+    <message>
+        <source>Slot B</source>
+        <translation>插槽 B</translation>
+    </message>
+    <message>
+        <source>Staged package</source>
+        <translation>暂存包</translation>
+    </message>
+    <message>
+        <source>Staged</source>
+        <translation>已暂存</translation>
+    </message>
+    <message>
+        <source>Switch between engineering property pages for the selected EtherCAT node.</source>
+        <translation>在所选 EtherCAT 节点的各工程属性页面之间切换。</translation>
+    </message>
+    <message>
+        <source>The controller adapter is unavailable.</source>
+        <translation>控制器适配器不可用。</translation>
+    </message>
+    <message>
+        <source>The controller connection is not ready to refresh.</source>
+        <translation>控制器连接尚未准备好刷新。</translation>
+    </message>
+    <message>
+        <source>The controller connection workflow is shutting down.</source>
+        <translation>控制器连接工作流正在关闭。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT Master does not own an active connection.</source>
+        <translation>所选 EtherCAT 主站没有活动连接。</translation>
+    </message>
+    <message>
+        <source>The selected connection profile is unavailable.</source>
+        <translation>所选连接配置不可用。</translation>
+    </message>
+    <message>
+        <source>The selected controller adapter is no longer available.</source>
+        <translation type="vanished">所选控制器适配器已不可用。</translation>
+    </message>
+    <message>
+        <source>The selected controller adapter is unavailable.</source>
+        <translation>所选控制器适配器不可用。</translation>
+    </message>
+    <message>
+        <source>The selected controller connection is not ready.</source>
+        <translation>所选控制器连接尚未就绪。</translation>
+    </message>
+    <message>
+        <source>This adapter is connected for another EtherCAT Master. Select that Master to refresh or disconnect it.</source>
+        <translation type="vanished">此适配器已连接到另一个 EtherCAT 主站。请选择该主站进行刷新或断开。</translation>
+    </message>
+    <message>
+        <source>This adapter is still connected for a Project that is no longer open. Click Disconnect to finish cleanup.</source>
+        <translation type="vanished">此适配器仍连接到已关闭的项目。请点击“断开”完成清理。</translation>
+    </message>
+    <message>
+        <source>Trial boot</source>
+        <translation>试运行启动</translation>
+    </message>
+    <message>
+        <source>Unavailable adapter — %1</source>
+        <translation>不可用的适配器 — %1</translation>
+    </message>
+    <message>
+        <source>Unavailable profile — %1</source>
+        <translation>不可用的连接配置 — %1</translation>
+    </message>
+    <message>
+        <source>Unnamed connection profile</source>
+        <translation>未命名连接配置</translation>
+    </message>
+    <message>
+        <source>Unnamed controller adapter</source>
+        <translation>未命名控制器适配器</translation>
+    </message>
+    <message>
+        <source>Updated at</source>
+        <translation>更新时间</translation>
+    </message>
+    <message>
+        <source>Verified</source>
+        <translation>已验证</translation>
+    </message>
+    <message>
+        <source>Working counter</source>
+        <translation>工作计数器</translation>
+    </message>
+    <message>
+        <source>v%1.%2</source>
+        <translation>v%1.%2</translation>
+    </message>
+    <message>
+        <source>Connected</source>
+        <translation>已连接</translation>
+    </message>
+    <message>
+        <source>Exclusive control</source>
+        <translation>独占控制</translation>
+    </message>
+    <message>
+        <source>Lease held by another session</source>
+        <translation>控制租约由另一会话持有</translation>
+    </message>
+    <message>
+        <source>Control lease ownership unverified</source>
+        <translation>控制租约归属尚未验证</translation>
+    </message>
+    <message>
+        <source>Control available / lease not acquired</source>
+        <translation>控制权可用 / 尚未获取租约</translation>
+    </message>
+    <message>
+        <source>Exclusive control of real controller</source>
+        <translation type="vanished">已独占控制真实控制器</translation>
+    </message>
+    <message>
+        <source>Idle</source>
+        <translation>空闲</translation>
+    </message>
+    <message>
+        <source>Installing</source>
+        <translation>正在安装</translation>
+    </message>
+    <message>
+        <source>Connect establishes all controller channels, reads the authoritative snapshot, and then automatically requests exclusive control. It does not scan the bus, change controller state, or write configuration. Use the Workbench Run, Pause / Resume, and Controlled Stop buttons in the lower-left control area for daily operation.</source>
+        <translation type="vanished">连接操作会建立所有控制器通道，读取权威快照，然后自动请求独占控制。它不会扫描总线、切换控制器状态或写入配置。日常运行请使用 Workbench 左下角控制区的“运行”“暂停/恢复”和“受控停止”按钮。</translation>
+    </message>
+    <message>
+        <source>Advanced controller control</source>
+        <translation>高级控制器控制</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>状态</translation>
+    </message>
+    <message>
+        <source>Detail</source>
+        <translation>详细信息</translation>
+    </message>
+    <message>
+        <source>Connection</source>
+        <translation>连接</translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>访问</translation>
+    </message>
+    <message>
+        <source>Communication</source>
+        <translation>通信</translation>
+    </message>
+    <message>
+        <source>This adapter is showing a historical snapshot for another EtherCAT Master.</source>
+        <translation type="vanished">此适配器正在显示另一个 EtherCAT 主站的历史快照。</translation>
+    </message>
+    <message>
+        <source>Select a controller control operation.</source>
+        <translation>请选择控制器控制操作。</translation>
+    </message>
+    <message>
+        <source>Controller control</source>
+        <translation>控制器控制</translation>
+    </message>
+    <message>
+        <source>Acquire control</source>
+        <translation>获取控制权</translation>
+    </message>
+    <message>
+        <source>Release control</source>
+        <translation>释放控制权</translation>
+    </message>
+    <message>
+        <source>Enter configuration</source>
+        <translation>进入配置模式</translation>
+    </message>
+    <message>
+        <source>Scan bus</source>
+        <translation>扫描总线</translation>
+    </message>
+    <message>
+        <source>Restore package</source>
+        <translation>恢复软件包</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>启动</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>暂停</translation>
+    </message>
+    <message>
+        <source>Resume</source>
+        <translation>恢复运行</translation>
+    </message>
+    <message>
+        <source>Controlled stop</source>
+        <translation>受控停止</translation>
+    </message>
+    <message>
+        <source>Configures a controller adapter and controls its connected EtherCAT Master.</source>
+        <translation>配置控制器适配器，并控制其连接的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Controller control safety boundary</source>
+        <translation type="vanished">控制器控制安全边界</translation>
+    </message>
+    <message>
+        <source>Acquire</source>
+        <translation>获取控制权</translation>
+    </message>
+    <message>
+        <source>Acquire the controller control lease for this EtherCAT Master.</source>
+        <translation>获取此 EtherCAT 主站对应控制器的控制租约。</translation>
+    </message>
+    <message>
+        <source>Configuration</source>
+        <translation>配置模式</translation>
+    </message>
+    <message>
+        <source>Stop active operation safely and enter controller configuration mode.</source>
+        <translation>以受控方式停止当前操作并进入控制器配置模式。</translation>
+    </message>
+    <message>
+        <source>Rescan Bus</source>
+        <translation>重新扫描总线</translation>
+    </message>
+    <message>
+        <source>Explicitly rescan the live EtherCAT bus. This does not modify the offline Project.</source>
+        <translation>明确重新扫描实际 EtherCAT 总线。此操作不会修改离线项目。</translation>
+    </message>
+    <message>
+        <source>Restore Package</source>
+        <translation>恢复软件包</translation>
+    </message>
+    <message>
+        <source>Restore the controller&apos;s exact persistent active package.</source>
+        <translation>恢复控制器精确的持久化活动软件包。</translation>
+    </message>
+    <message>
+        <source>Controlled Stop</source>
+        <translation>受控停止</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>释放</translation>
+    </message>
+    <message>
+        <source>Release this session&apos;s management lease without stopping an autonomous cyclic task.</source>
+        <translation>释放当前会话的管理租约，但不停止控制器上的自主周期任务。</translation>
+    </message>
+    <message>
+        <source>Controller control progress</source>
+        <translation type="vanished">控制器控制进度</translation>
+    </message>
+    <message>
+        <source>Actual Bus</source>
+        <translation>实际总线</translation>
+    </message>
+    <message>
+        <source>Actual EtherCAT bus topology</source>
+        <translation>实际 EtherCAT 总线拓扑</translation>
+    </message>
+    <message>
+        <source>Read-only results from the most recent live controller bus scan.</source>
+        <translation>最近一次实时控制器总线扫描的只读结果。</translation>
+    </message>
+    <message>
+        <source>Station</source>
+        <translation>站地址</translation>
+    </message>
+    <message>
+        <source>AL</source>
+        <translation>AL</translation>
+    </message>
+    <message>
+        <source>Serial</source>
+        <translation>序列号</translation>
+    </message>
+    <message>
+        <source>%1 — the controller connection failed.</source>
+        <translation type="vanished">%1 — 控制器连接失败。</translation>
+    </message>
+    <message>
+        <source>No controller control operation has run.</source>
+        <translation type="vanished">尚未执行控制器控制操作。</translation>
+    </message>
+    <message>
+        <source>%1 is in progress.</source>
+        <translation type="vanished">“%1”正在进行。</translation>
+    </message>
+    <message>
+        <source>%1 succeeded.</source>
+        <translation type="vanished">“%1”已成功。</translation>
+    </message>
+    <message>
+        <source>%1 failed.</source>
+        <translation type="vanished">“%1”失败。</translation>
+    </message>
+    <message>
+        <source>Stage: %1</source>
+        <translation type="vanished">阶段：%1</translation>
+    </message>
+    <message>
+        <source>Operation result: %1</source>
+        <translation type="vanished">操作结果：%1</translation>
+    </message>
+    <message>
+        <source>No live bus topology has been scanned.</source>
+        <translation type="vanished">尚未扫描实际总线拓扑。</translation>
+    </message>
+    <message>
+        <source>%1 responding device(s), %2 displayed</source>
+        <translation>%1 个响应设备，显示 %2 个</translation>
+    </message>
+    <message>
+        <source> — scanned %1</source>
+        <translation> — 扫描时间 %1</translation>
+    </message>
+    <message>
+        <source> — result %1</source>
+        <translation> — 结果 %1</translation>
+    </message>
+    <message>
+        <source>Start free-run</source>
+        <translation>启动自由运行</translation>
+    </message>
+    <message>
+        <source>Start distributed clocks</source>
+        <translation>启动分布式时钟运行</translation>
+    </message>
+    <message numerus="yes">
+        <source> Last scan: %n responding device(s).</source>
+        <translation>
+            <numerusform> 最近一次扫描：%n 个设备响应。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1. Current value: %2. Source: %3.</source>
+        <translation>%1。当前值：%2。来源：%3。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n online</source>
+        <translation>
+            <numerusform>%n 个在线</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n online device(s)</source>
+        <translation>
+            <numerusform>%n 个在线设备</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n responding</source>
+        <translation>
+            <numerusform>%n 个响应</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n responding device(s)</source>
+        <translation>
+            <numerusform>%n 个响应设备</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>A controller startup step failed.</source>
+        <translation>控制器启动步骤失败。</translation>
+    </message>
+    <message>
+        <source>A different controller operation replaced automatic startup.</source>
+        <translation>其他控制器操作中断了自动启动流程。</translation>
+    </message>
+    <message>
+        <source>AL %1</source>
+        <translation>AL %1</translation>
+    </message>
+    <message>
+        <source>Actual bus</source>
+        <translation type="vanished">实际总线</translation>
+    </message>
+    <message numerus="yes">
+        <source>Actual bus scan: %n responding device(s).</source>
+        <translation>
+            <numerusform>实际总线扫描：%n 个设备响应。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Automatic controller startup is in progress.</source>
+        <translation>控制器正在自动启动。</translation>
+    </message>
+    <message>
+        <source>Automatic controller startup stopped because the controller adapter was removed.</source>
+        <translation>控制器适配器已移除，自动启动已停止。</translation>
+    </message>
+    <message>
+        <source>Automatic controller startup was canceled because its project closed.</source>
+        <translation>所属项目已关闭，控制器自动启动已取消。</translation>
+    </message>
+    <message>
+        <source>Bus device %1</source>
+        <translation type="vanished">总线设备 %1</translation>
+    </message>
+    <message>
+        <source>
+Position: %1
+Station: 0x%2
+AL state: %3
+Vendor: 0x%4
+Product: 0x%5
+Revision: 0x%6
+Serial: 0x%7</source>
+        <translation>
+位置：%1
+站地址：0x%2
+AL 状态：%3
+厂商：0x%4
+产品：0x%5
+修订版本：0x%6
+序列号：0x%7</translation>
+    </message>
+    <message>
+        <source>The controller bus scan returned result %1.</source>
+        <translation>控制器总线扫描返回结果 %1。</translation>
+    </message>
+    <message>
+        <source>Unknown device 0x%1</source>
+        <translation>未知设备 0x%1</translation>
+    </message>
+    <message>
+        <source>[%1] %2</source>
+        <translation>[%1] %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n detected device(s)</source>
+        <translation>
+            <numerusform>检测到 %n 个设备</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Connected controller Product API endpoint.</source>
+        <translation>已连接控制器的 Product API 端点。</translation>
+    </message>
+    <message>
+        <source>Controller cycle counter: %1</source>
+        <translation>控制器周期计数：%1</translation>
+    </message>
+    <message>
+        <source>Controller endpoint: %1</source>
+        <translation>控制器端点：%1</translation>
+    </message>
+    <message>
+        <source>Controller session</source>
+        <translation>控制器会话</translation>
+    </message>
+    <message>
+        <source>Controller startup completed.</source>
+        <translation>控制器启动完成。</translation>
+    </message>
+    <message>
+        <source>Controller startup completed: Running, WKC %1/%2, cycle %3.</source>
+        <translation>控制器启动完成：正在运行，WKC %1/%2，周期计数 %3。</translation>
+    </message>
+    <message>
+        <source>Controller startup failed: %1</source>
+        <translation>控制器启动失败：%1</translation>
+    </message>
+    <message>
+        <source>Performance push</source>
+        <translation>性能推送</translation>
+    </message>
+    <message>
+        <source>Cycle timing</source>
+        <translation>周期时序</translation>
+    </message>
+    <message>
+        <source>%1–%2 ns · submit late %3 ns</source>
+        <translation>%1–%2 ns · 提交延迟 %3 ns</translation>
+    </message>
+    <message>
+        <source>Cyclic alerts</source>
+        <translation>周期告警</translation>
+    </message>
+    <message>
+        <source>Late %1 · WKC %2 · timeout %3</source>
+        <translation>超期 %1 · WKC %2 · 超时 %3</translation>
+    </message>
+    <message>
+        <source>Process sample</source>
+        <translation>过程数据采样</translation>
+    </message>
+    <message>
+        <source>%1 bytes · capture cycle %2 · age %3</source>
+        <translation>%1 字节 · 采样周期 %2 · 延迟 %3</translation>
+    </message>
+    <message>
+        <source>Cycle counter</source>
+        <translation>周期计数</translation>
+    </message>
+    <message>
+        <source>Distributed Clocks</source>
+        <translation>分布式时钟</translation>
+    </message>
+    <message>
+        <source>Distributed Clocks locked; difference %1 ns.</source>
+        <translation>分布式时钟已锁定；偏差 %1 ns。</translation>
+    </message>
+    <message>
+        <source>Distributed Clocks not locked; difference %1 ns.</source>
+        <translation>分布式时钟未锁定；偏差 %1 ns。</translation>
+    </message>
+    <message>
+        <source>Restore the saved controller package and start it using its configured FreeRun or Distributed Clocks mode. Scan is available only from the explicit Rescan command.</source>
+        <translation>恢复已保存的控制器软件包，并按其配置的 FreeRun 或分布式时钟模式启动。只有明确执行“重新扫描”命令时才会扫描总线。</translation>
+    </message>
+    <message>
+        <source>EtherCAT AL state</source>
+        <translation>EtherCAT AL 状态</translation>
+    </message>
+    <message>
+        <source>Exclusive controller control was lost during automatic startup.</source>
+        <translation>自动启动期间丢失了控制器独占控制权。</translation>
+    </message>
+    <message>
+        <source>Live EtherCAT cyclic telemetry</source>
+        <translation>实时 EtherCAT 周期遥测</translation>
+    </message>
+    <message>
+        <source>Live aggregate cyclic telemetry from controller protocol v%1. The protocol does not expose individual cyclic frame descriptors.</source>
+        <translation>来自控制器 v%1 协议的实时周期汇总遥测。当前协议不提供单帧周期描述。</translation>
+    </message>
+    <message>
+        <source>Live cyclic transfer is running. Cycle counter %1, WKC %2/%3. Protocol v%4 provides aggregate cyclic evidence but not individual frame descriptors.</source>
+        <translation>实时周期传输正在运行。周期计数 %1，WKC %2/%3。v%4 协议提供周期汇总证据，但不提供单帧描述。</translation>
+    </message>
+    <message>
+        <source>Live metric</source>
+        <translation>实时指标</translation>
+    </message>
+    <message>
+        <source>Live cyclic telemetry is unavailable while the controller is %1.</source>
+        <translation>控制器处于 %1 状态时无法提供实时周期遥测。</translation>
+    </message>
+    <message>
+        <source>Locked — difference %1 ns</source>
+        <translation>已锁定 — 偏差 %1 ns</translation>
+    </message>
+    <message>
+        <source>Not locked — difference %1 ns</source>
+        <translation>未锁定 — 偏差 %1 ns</translation>
+    </message>
+    <message>
+        <source>Online %1 | WKC %2/%3</source>
+        <translation>在线 %1 | WKC %2/%3</translation>
+    </message>
+    <message>
+        <source>Online EtherCAT master — %1, AL %2, WKC %3/%4.</source>
+        <translation>在线 EtherCAT 主站 — %1，AL %2，WKC %3/%4。</translation>
+    </message>
+    <message>
+        <source>Online | %1 / AL %2 | WKC %3/%4</source>
+        <translation>在线 | %1 / AL %2 | WKC %3/%4</translation>
+    </message>
+    <message>
+        <source>Online | AL %1</source>
+        <translation>在线 | AL %1</translation>
+    </message>
+    <message>
+        <source>Run is available while the controller is in Shutdown, OP_SAFE, or Paused.</source>
+        <translation>控制器处于关停、OP_SAFE 或已暂停状态时可以运行。</translation>
+    </message>
+    <message>
+        <source>Starting Controller...</source>
+        <translation>正在启动控制器...</translation>
+    </message>
+    <message>
+        <source>Starting controller: enter configuration, scan the bus, restore the active package, then start runtime.</source>
+        <translation>正在启动控制器：进入配置模式、扫描总线、恢复活动软件包，然后启动运行时。</translation>
+    </message>
+    <message>
+        <source>Station %1; vendor %2; product %3; revision %4; serial %5.</source>
+        <translation>站地址 %1；厂商 %2；产品 %3；版本 %4；序列号 %5。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT bus is operational while the runtime is %1. Cycle counter %2, WKC %3/%4.</source>
+        <translation>EtherCAT 总线处于运行状态，当前运行时状态为 %1。周期计数 %2，WKC %3/%4。</translation>
+    </message>
+    <message>
+        <source>The controller adapter instance changed during startup.</source>
+        <translation>启动期间控制器适配器实例发生变化。</translation>
+    </message>
+    <message>
+        <source>The controller adapter instance is unavailable.</source>
+        <translation>控制器适配器实例不可用。</translation>
+    </message>
+    <message>
+        <source>The controller disconnected during automatic startup.</source>
+        <translation>自动启动期间控制器连接已断开。</translation>
+    </message>
+    <message>
+        <source>The controller does not support the fast restart sequence.</source>
+        <translation>控制器不支持快速重新启动流程。</translation>
+    </message>
+    <message>
+        <source>The controller is connected; waiting for its authoritative runtime state.</source>
+        <translation>控制器已连接；正在等待权威运行状态。</translation>
+    </message>
+    <message>
+        <source>The controller is online in %1; cyclic process-data transfer is not active.</source>
+        <translation>控制器在线，当前状态为 %1；周期过程数据传输尚未运行。</translation>
+    </message>
+    <message>
+        <source>The controller session changed during automatic startup.</source>
+        <translation>自动启动期间控制器会话发生变化。</translation>
+    </message>
+    <message>
+        <source>Timed out while waiting for automatic controller startup.</source>
+        <translation>等待控制器自动启动超时。</translation>
+    </message>
+    <message>
+        <source>configuration</source>
+        <translation>配置</translation>
+    </message>
+    <message>
+        <source>link timeout</source>
+        <translation>链路超时</translation>
+    </message>
+    <message>
+        <source>RX drop</source>
+        <translation>接收丢帧</translation>
+    </message>
+    <message>
+        <source>RX overflow</source>
+        <translation>接收溢出</translation>
+    </message>
+    <message>
+        <source>TX unavailable</source>
+        <translation>发送不可用</translation>
+    </message>
+    <message>
+        <source>WKC mismatch</source>
+        <translation>WKC 不匹配</translation>
+    </message>
+    <message>
+        <source>protocol</source>
+        <translation>协议</translation>
+    </message>
+    <message>
+        <source>cycle deadline missed</source>
+        <translation>周期超期</translation>
+    </message>
+    <message>
+        <source>slave AL status</source>
+        <translation>从站 AL 状态</translation>
+    </message>
+    <message>
+        <source>mailbox</source>
+        <translation>邮箱通信</translation>
+    </message>
+    <message>
+        <source>SDO abort</source>
+        <translation>SDO 中止</translation>
+    </message>
+    <message>
+        <source>DC configuration</source>
+        <translation>DC 配置</translation>
+    </message>
+    <message>
+        <source>DC drift</source>
+        <translation>DC 漂移</translation>
+    </message>
+    <message>
+        <source>command precondition</source>
+        <translation>命令前置条件</translation>
+    </message>
+    <message>
+        <source>watchdog</source>
+        <translation>看门狗</translation>
+    </message>
+    <message>
+        <source>internal</source>
+        <translation>内部故障</translation>
+    </message>
+    <message>
+        <source>network quick stop</source>
+        <translation>网络快速停止</translation>
+    </message>
+    <message>
+        <source>unknown bits</source>
+        <translation>未知位</translation>
+    </message>
+    <message>
+        <source>none (%1)</source>
+        <translation>无（%1）</translation>
+    </message>
+    <message>
+        <source>The cause has cleared; confirm it is safe, then reset the latched fault.</source>
+        <translation>原因已消失；确认安全后复位锁存故障。</translation>
+    </message>
+    <message>
+        <source>Refresh diagnostics; the controller reported no fault mask.</source>
+        <translation>刷新诊断；控制器未报告故障位。</translation>
+    </message>
+    <message>
+        <source>Resolve every current fault before resetting the controller.</source>
+        <translation>复位控制器前，请先处理全部当前故障。</translation>
+    </message>
+    <message>
+        <source>Check the active package, scanned topology, PDOs, and startup parameters.</source>
+        <translation>检查活动软件包、扫描拓扑、PDO 和启动参数。</translation>
+    </message>
+    <message>
+        <source>Check the EtherCAT cable, slave power, and link diagnostics.</source>
+        <translation>检查 EtherCAT 网线、从站供电和链路诊断。</translation>
+    </message>
+    <message>
+        <source>Check RX drops, frame identity, and receive context.</source>
+        <translation>检查接收丢帧、帧标识和接收上下文。</translation>
+    </message>
+    <message>
+        <source>Check the receive queue depth and processing load.</source>
+        <translation>检查接收队列深度和处理负载。</translation>
+    </message>
+    <message>
+        <source>Check the transmit ring and controller link readiness.</source>
+        <translation>检查发送环和控制器链路就绪状态。</translation>
+    </message>
+    <message>
+        <source>Compare expected WKC with each slave's AL state and the topology.</source>
+        <translation>对比期望 WKC、各从站 AL 状态和拓扑。</translation>
+    </message>
+    <message>
+        <source>Inspect the raw frame and datagram identity.</source>
+        <translation>检查原始帧和数据报标识。</translation>
+    </message>
+    <message>
+        <source>Check cycle timing and the submit deadline.</source>
+        <translation>检查周期时序和提交截止时间。</translation>
+    </message>
+    <message>
+        <source>Read the affected slave's AL status code.</source>
+        <translation>读取故障从站的 AL 状态码。</translation>
+    </message>
+    <message>
+        <source>Check the mailbox phase, size, protocol, and timeout.</source>
+        <translation>检查邮箱阶段、大小、协议和超时。</translation>
+    </message>
+    <message>
+        <source>Decode the SDO abort code and object index/subindex.</source>
+        <translation>解析 SDO 中止码和对象索引/子索引。</translation>
+    </message>
+    <message>
+        <source>Verify the ESI DC mode, cycle, shift, and reference clock.</source>
+        <translation>核对 ESI DC 模式、周期、偏移和参考时钟。</translation>
+    </message>
+    <message>
+        <source>Check DC synchronization, the reference clock, and the link.</source>
+        <translation>检查 DC 同步、参考时钟和链路。</translation>
+    </message>
+    <message>
+        <source>Refresh state and verify the command preconditions.</source>
+        <translation>刷新状态并核对命令前置条件。</translation>
+    </message>
+    <message>
+        <source>Check the cyclic task, application budget, and watchdog source.</source>
+        <translation>检查周期任务、应用预算和看门狗来源。</translation>
+    </message>
+    <message>
+        <source>Preserve diagnostics and use controlled recovery.</source>
+        <translation>保留诊断信息并执行受控恢复。</translation>
+    </message>
+    <message>
+        <source>Confirm the operator request before resetting the fault.</source>
+        <translation>确认操作者请求后再复位故障。</translation>
+    </message>
+    <message>
+        <source>Resolve the current fault before resetting the controller.</source>
+        <translation>复位控制器前，请先处理当前故障。</translation>
+    </message>
+    <message>
+        <source>Controller fault</source>
+        <translation>控制器故障</translation>
+    </message>
+    <message>
+        <source>current: %1</source>
+        <translation>当前：%1</translation>
+    </message>
+    <message>
+        <source>latched: %1</source>
+        <translation>锁存：%1</translation>
+    </message>
+    <message>
+        <source>alarm #%1</source>
+        <translation>告警 #%1</translation>
+    </message>
+    <message>
+        <source>last command: %1</source>
+        <translation>最近命令：%1</translation>
+    </message>
+    <message>
+        <source>Action: %1</source>
+        <translation>处理：%1</translation>
+    </message>
+    <message>
+        <source>status %1</source>
+        <translation>状态码 %1</translation>
+    </message>
+    <message>
+        <source>result %1</source>
+        <translation>结果 %1</translation>
+    </message>
+    <message>
+        <source>diagnostic 0x%1</source>
+        <translation>诊断 0x%1</translation>
+    </message>
+    <message>
+        <source>No diagnostic details were returned.</source>
+        <translation>未返回诊断详情。</translation>
+    </message>
+    <message>
+        <source>Connection failed: %1</source>
+        <translation>连接失败：%1</translation>
+    </message>
+    <message>
+        <source>Controller error: %1</source>
+        <translation>控制器错误：%1</translation>
+    </message>
+    <message>
+        <source>uploading</source>
+        <translation>正在上传</translation>
+    </message>
+    <message>
+        <source>committing</source>
+        <translation>正在提交</translation>
+    </message>
+    <message>
+        <source>validating</source>
+        <translation>正在校验</translation>
+    </message>
+    <message>
+        <source>activating</source>
+        <translation>正在激活</translation>
+    </message>
+    <message>
+        <source>rolling back</source>
+        <translation>正在回滚</translation>
+    </message>
+    <message>
+        <source>canceling</source>
+        <translation>正在取消</translation>
+    </message>
+    <message>
+        <source>canceled</source>
+        <translation>已取消</translation>
+    </message>
+    <message>
+        <source>outcome unknown</source>
+        <translation>结果未知</translation>
+    </message>
+    <message>
+        <source>Package deployment %1</source>
+        <translation>软件包部署：%1</translation>
+    </message>
+    <message>
+        <source> [%1]</source>
+        <translation> [%1]</translation>
+    </message>
+    <message>
+        <source> %1/%2 bytes</source>
+        <translation> %1/%2 字节</translation>
+    </message>
+    <message>
+        <source>Uploading</source>
+        <translation>正在上传</translation>
+    </message>
+    <message>
+        <source>Committing</source>
+        <translation>正在提交</translation>
+    </message>
+    <message>
+        <source>Validating</source>
+        <translation>正在校验</translation>
+    </message>
+    <message>
+        <source>Activating</source>
+        <translation>正在激活</translation>
+    </message>
+    <message>
+        <source>Rolling back</source>
+        <translation>正在回滚</translation>
+    </message>
+    <message>
+        <source>Canceling</source>
+        <translation>正在取消</translation>
+    </message>
+    <message>
+        <source>Succeeded</source>
+        <translation>已成功</translation>
+    </message>
+    <message>
+        <source>Canceled</source>
+        <translation>已取消</translation>
+    </message>
+    <message>
+        <source>Outcome unknown</source>
+        <translation>结果未知</translation>
+    </message>
+    <message>
+        <source>Upload package</source>
+        <translation>上传软件包</translation>
+    </message>
+    <message>
+        <source>Abort package upload</source>
+        <translation>中止软件包上传</translation>
+    </message>
+    <message>
+        <source>Validate package</source>
+        <translation>校验软件包</translation>
+    </message>
+    <message>
+        <source>Activate package</source>
+        <translation>激活软件包</translation>
+    </message>
+    <message>
+        <source>Rollback package</source>
+        <translation>回滚软件包</translation>
+    </message>
+    <message>
+        <source>Query package state</source>
+        <translation>查询软件包状态</translation>
+    </message>
+    <message>
+        <source>Controller operation</source>
+        <translation>控制器操作</translation>
+    </message>
+    <message>
+        <source>%1 / generation %2 / configuration %3</source>
+        <translation>%1 / 代次 %2 / 配置 %3</translation>
+    </message>
+    <message>
+        <source>Activate after validation</source>
+        <translation>校验后激活</translation>
+    </message>
+    <message>
+        <source>Rollback on explicit activation failure</source>
+        <translation>明确的激活失败时回滚</translation>
+    </message>
+    <message>
+        <source>Controller package deployment</source>
+        <translation>控制器软件包部署</translation>
+    </message>
+    <message>
+        <source>Controller package staging</source>
+        <translation>控制器软件包暂存</translation>
+    </message>
+    <message>
+        <source>Stages and validates one already-built ECPKG through the selected controller adapter&apos;s transactional package service.</source>
+        <translation>通过所选控制器适配器的事务性软件包服务，暂存并校验已构建的 ECPKG。</translation>
+    </message>
+    <message>
+        <source>Select an immutable, already-built ECPKG. This page only uploads and validates it. Activation and node control binding require the trusted project workflow, which is not available here.</source>
+        <translation>请选择不可变且已构建的 ECPKG。此页面仅上传并校验。激活与节点控制绑定需要可信项目流程，此处暂不可用。</translation>
+    </message>
+    <message>
+        <source>Deploys one already-built and signed ECPKG through the selected controller adapter&apos;s transactional package service.</source>
+        <translation>通过所选控制器适配器的事务性软件包服务部署一个已构建并签名的 ECPKG。</translation>
+    </message>
+    <message>
+        <source>Select an immutable, already-built and signed ECPKG. Deployment requires an exclusive control lease, transactional Bulk support, and a ready controller in Shutdown. Embed Labs does not construct, rewrite, or sign the package.</source>
+        <translation>请选择不可变、已构建并签名的 ECPKG。部署要求拥有独占控制租约、支持事务性 Bulk，并且控制器已就绪且处于关停状态。Embed Labs 不会构建、改写或签名该软件包。</translation>
+    </message>
+    <message>
+        <source>ECPKG artifact path</source>
+        <translation>ECPKG 文件路径</translation>
+    </message>
+    <message>
+        <source>Select an .ecpkg file</source>
+        <translation>选择 .ecpkg 文件</translation>
+    </message>
+    <message>
+        <source>Browse for ECPKG</source>
+        <translation>浏览 ECPKG 文件</translation>
+    </message>
+    <message>
+        <source>Package configuration ID</source>
+        <translation>软件包配置 ID</translation>
+    </message>
+    <message>
+        <source>For example, 813</source>
+        <translation>例如 813</translation>
+    </message>
+    <message>
+        <source>Package deployment OperationId</source>
+        <translation>软件包部署 OperationId</translation>
+    </message>
+    <message>
+        <source>New Operation ID</source>
+        <translation>新建操作 ID</translation>
+    </message>
+    <message>
+        <source>Generate a new package deployment OperationId</source>
+        <translation>生成新的软件包部署 OperationId</translation>
+    </message>
+    <message>
+        <source>Generate a new client audit and idempotency identifier. Do not retry an unknown outcome with a new identifier.</source>
+        <translation>生成新的客户端审计与幂等标识符。结果未知时不要使用新标识符重试。</translation>
+    </message>
+    <message>
+        <source>ECPKG artifact:</source>
+        <translation>ECPKG 文件：</translation>
+    </message>
+    <message>
+        <source>Configuration ID:</source>
+        <translation>配置 ID：</translation>
+    </message>
+    <message>
+        <source>Operation ID:</source>
+        <translation>操作 ID：</translation>
+    </message>
+    <message>
+        <source>Deployment options:</source>
+        <translation>部署选项：</translation>
+    </message>
+    <message>
+        <source>Deploy Package</source>
+        <translation>部署软件包</translation>
+    </message>
+    <message>
+        <source>Stage Package</source>
+        <translation>暂存软件包</translation>
+    </message>
+    <message>
+        <source>Stage and validate controller package</source>
+        <translation>暂存并校验控制器软件包</translation>
+    </message>
+    <message>
+        <source>Deploy controller package</source>
+        <translation>部署控制器软件包</translation>
+    </message>
+    <message>
+        <source>Cancel Upload</source>
+        <translation>取消上传</translation>
+    </message>
+    <message>
+        <source>Cancel controller package upload</source>
+        <translation>取消控制器软件包上传</translation>
+    </message>
+    <message>
+        <source>No deployment</source>
+        <translation>无部署任务</translation>
+    </message>
+    <message>
+        <source>Controller package status</source>
+        <translation>控制器软件包状态</translation>
+    </message>
+    <message>
+        <source>Package deployment audit events</source>
+        <translation>软件包部署审计事件</translation>
+    </message>
+    <message>
+        <source>Sequence</source>
+        <translation>序号</translation>
+    </message>
+    <message>
+        <source>Request</source>
+        <translation>请求</translation>
+    </message>
+    <message>
+        <source>Status / Result</source>
+        <translation>状态/结果</translation>
+    </message>
+    <message>
+        <source>Deployment state</source>
+        <translation>部署状态</translation>
+    </message>
+    <message>
+        <source>Deployment audit</source>
+        <translation>部署审计</translation>
+    </message>
+    <message>
+        <source>Select Controller Package</source>
+        <translation>选择控制器软件包</translation>
+    </message>
+    <message>
+        <source>EtherCAT controller packages (*.ecpkg);;All files (*)</source>
+        <translation>EtherCAT 控制器软件包 (*.ecpkg);;所有文件 (*)</translation>
+    </message>
+    <message>
+        <source>Select an ECPKG artifact.</source>
+        <translation>请选择 ECPKG 文件。</translation>
+    </message>
+    <message>
+        <source>The selected artifact must use the .ecpkg extension.</source>
+        <translation>所选文件必须使用 .ecpkg 扩展名。</translation>
+    </message>
+    <message>
+        <source>The selected ECPKG artifact is not a readable file.</source>
+        <translation>所选 ECPKG 不是可读取的文件。</translation>
+    </message>
+    <message>
+        <source>The selected ECPKG artifact is empty.</source>
+        <translation>所选 ECPKG 文件为空。</translation>
+    </message>
+    <message>
+        <source>The selected ECPKG exceeds the protocol maximum of 16 MiB.</source>
+        <translation>所选 ECPKG 超过协议规定的 16 MiB 上限。</translation>
+    </message>
+    <message>
+        <source>%1 bytes · SHA-256 %2</source>
+        <translation>%1 字节 · SHA-256 %2</translation>
+    </message>
+    <message>
+        <source>Cannot load the controller package: %1</source>
+        <translation>无法加载控制器软件包：%1</translation>
+    </message>
+    <message>
+        <source>Cannot deploy the controller package: enter a nonzero configuration ID.</source>
+        <translation>无法部署控制器软件包：请输入非零配置 ID。</translation>
+    </message>
+    <message>
+        <source>Cannot deploy the controller package: %1</source>
+        <translation>无法部署控制器软件包：%1</translation>
+    </message>
+    <message>
+        <source>Cannot stage the controller package: enter a nonzero configuration ID.</source>
+        <translation>无法暂存控制器软件包：请输入非零配置 ID。</translation>
+    </message>
+    <message>
+        <source>Cannot stage the controller package: %1</source>
+        <translation>无法暂存控制器软件包：%1</translation>
+    </message>
+    <message>
+        <source>Package staging queued [%1]: configuration %2, SHA-256 %3.</source>
+        <translation>软件包暂存已排队 [%1]：配置 %2，SHA-256 %3。</translation>
+    </message>
+    <message>
+        <source>Queued package deployment [%1] from %2: %3 bytes, SHA-256 %4, configuration %5.</source>
+        <translation>已将软件包部署 [%1] 加入队列，来源 %2：%3 字节，SHA-256 %4，配置 %5。</translation>
+    </message>
+    <message>
+        <source>Cannot cancel the package deployment: %1</source>
+        <translation>无法取消软件包部署：%1</translation>
+    </message>
+    <message>
+        <source>Package deployment cancellation requested [%1].</source>
+        <translation>已请求取消软件包部署 [%1]。</translation>
+    </message>
+    <message>
+        <source>Upload, validate, and optionally activate the exact selected ECPKG.</source>
+        <translation>上传并校验所选的准确 ECPKG，并可选择激活。</translation>
+    </message>
+    <message>
+        <source>Upload and validate the exact selected ECPKG without activating it.</source>
+        <translation>上传并校验所选的准确 ECPKG，但不激活。</translation>
+    </message>
+    <message>
+        <source>Request BulkAbort before package validation begins.</source>
+        <translation>在软件包校验开始前请求 BulkAbort。</translation>
+    </message>
+    <message>
+        <source>Package deployment can only be canceled during upload or commit.</source>
+        <translation>只能在上传或提交期间取消软件包部署。</translation>
+    </message>
+    <message>
+        <source>Operation ID</source>
+        <translation>操作 ID</translation>
+    </message>
+    <message>
+        <source>Artifact SHA-256</source>
+        <translation>文件 SHA-256</translation>
+    </message>
+    <message>
+        <source>Operation result</source>
+        <translation>操作结果</translation>
+    </message>
+    <message>
+        <source>%1 / %2 bytes</source>
+        <translation>%1 / %2 字节</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT Master before deploying a package.</source>
+        <translation>请先选择 EtherCAT 主站，再部署软件包。</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT Master before staging a package.</source>
+        <translation>请先选择 EtherCAT 主站，再暂存软件包。</translation>
+    </message>
+    <message>
+        <source>Enter a nonzero package configuration ID.</source>
+        <translation>请输入非零的软件包配置 ID。</translation>
+    </message>
+    <message>
+        <source>Generate a package deployment OperationId.</source>
+        <translation>请生成软件包部署 OperationId。</translation>
+    </message>
+    <message>
+        <source>The connected controller adapter does not support package deployment.</source>
+        <translation>已连接的控制器适配器不支持软件包部署。</translation>
+    </message>
+    <message>
+        <source>Connect the controller before deploying a package.</source>
+        <translation>部署软件包前，请先连接控制器。</translation>
+    </message>
+    <message>
+        <source>Controller package deployment is unavailable for a Mock connection.</source>
+        <translation>Mock 连接不能部署控制器软件包。</translation>
+    </message>
+    <message>
+        <source>Wait for the current package deployment to finish.</source>
+        <translation>请等待当前软件包部署完成。</translation>
+    </message>
+    <message>
+        <source>Reconnect and verify the authoritative package state before starting another deployment.</source>
+        <translation>开始另一项部署前，请重新连接并核验权威软件包状态。</translation>
+    </message>
+    <message>
+        <source>Acquire the control lease before deploying a package.</source>
+        <translation>部署软件包前，请先取得控制租约。</translation>
+    </message>
+    <message>
+        <source>Browse...</source>
+        <translation>浏览...</translation>
+    </message>
+    <message>
+        <source>Deployment</source>
+        <translation>部署</translation>
+    </message>
+    <message>
+        <source>Enter configuration mode before deploying a controller package.</source>
+        <translation>部署控制器软件包前，请先进入配置模式。</translation>
+    </message>
+    <message>
+        <source>Operation</source>
+        <translation>操作</translation>
+    </message>
+    <message>
+        <source>The controller does not support transactional package upload.</source>
+        <translation>控制器不支持事务性软件包上传。</translation>
+    </message>
+    <message>
+        <source>The controller session identity is not available.</source>
+        <translation>控制器会话标识不可用。</translation>
+    </message>
+    <message>
+        <source>Time</source>
+        <translation>时间</translation>
+    </message>
+    <message>
+        <source>device 0x%1/0x%2/0x%3</source>
+        <translation>设备 0x%1/0x%2/0x%3</translation>
+    </message>
+    <message>
+        <source>%1 at position %2 (station 0x%3)</source>
+        <translation>%1，位置 %2（站地址 0x%3）</translation>
+    </message>
+    <message>
+        <source>device at position %1</source>
+        <translation>位置 %1 的设备</translation>
+    </message>
+    <message>
+        <source>%1 at position %2</source>
+        <translation>%1，位置 %2</translation>
+    </message>
+    <message>
+        <source>Scan the EtherCAT bus or configure its slaves before selecting FreeRun.</source>
+        <translation>选择 FreeRun 前，请先扫描 EtherCAT 总线或配置从站。</translation>
+    </message>
+    <message>
+        <source>FreeRun is not supported by %1. Select Distributed Clocks for this bus.</source>
+        <translation>%1 不支持 FreeRun。请为此总线选择分布式时钟模式。</translation>
+    </message>
+    <message>
+        <source>; </source>
+        <translation>；</translation>
+    </message>
+    <message>
+        <source>FreeRun compatibility cannot be verified for %1. Import matching ESI XML files that declare object 0x1C32/0x1C33 subindex 4 before selecting FreeRun.</source>
+        <translation>无法验证 %1 的 FreeRun 兼容性。选择 FreeRun 前，请导入匹配且声明对象 0x1C32/0x1C33 子索引 4 的 ESI XML 文件。</translation>
+    </message>
+    <message>
+        <source>Controller stop verification ended because the controller adapter was removed.</source>
+        <translation>控制器适配器已移除，停止验证已结束。</translation>
+    </message>
+    <message>
+        <source>Controller stop verification is in progress.</source>
+        <translation>正在验证控制器停止状态。</translation>
+    </message>
+    <message>
+        <source>Stop is available only while the controller is Running, Paused, or OP_SAFE.</source>
+        <translation>仅当控制器处于运行、暂停或 OP_SAFE 状态时才能停止。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT master is not available.</source>
+        <translation>EtherCAT 主站不可用。</translation>
+    </message>
+    <message>
+        <source>FreeRun is not supported by %1 according to its ESI synchronization capability.</source>
+        <translation>根据 ESI 同步能力，%1 不支持 FreeRun。</translation>
+    </message>
+    <message>
+        <source>FreeRun compatibility cannot be verified for %1 because matching ESI synchronization data is unavailable.</source>
+        <translation>由于缺少匹配的 ESI 同步数据，无法验证 %1 的 FreeRun 兼容性。</translation>
+    </message>
+    <message numerus="yes">
+        <source>Bus scan verified FreeRun support for %n device(s).</source>
+        <translation>
+            <numerusform>总线扫描已验证 %n 个设备支持 FreeRun。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Import matching ESI XML files that declare object 0x1C32/0x1C33 subindex 4 before selecting FreeRun.</source>
+        <translation>选择 FreeRun 前，请导入匹配且声明对象 0x1C32/0x1C33 子索引 4 的 ESI XML 文件。</translation>
+    </message>
+    <message>
+        <source>Select Distributed Clocks for this bus.</source>
+        <translation>请为此总线选择分布式时钟模式。</translation>
+    </message>
+    <message>
+        <source>Bus scan timing compatibility: %1</source>
+        <translation>总线扫描时序兼容性：%1</translation>
+    </message>
+    <message>
+        <source>Controller stop verification was canceled because its project closed.</source>
+        <translation>工程已关闭，控制器停止验证已取消。</translation>
+    </message>
+    <message>
+        <source>The controller does not support entering configuration after a controlled stop.</source>
+        <translation>控制器不支持在受控停止后进入配置态。</translation>
+    </message>
+    <message>
+        <source>The controller does not support the complete stop sequence.</source>
+        <translation>控制器不支持完整停止流程。</translation>
+    </message>
+    <message>
+        <source>Stopping controller: perform a controlled application stop, then enter configuration to stop cyclic EtherCAT traffic.</source>
+        <translation>正在停止控制器：先受控停止应用程序，再进入配置态以停止 EtherCAT 周期通信。</translation>
+    </message>
+    <message>
+        <source>Stopping controller from OP_SAFE: enter configuration to stop cyclic EtherCAT traffic.</source>
+        <translation>正在从 OP_SAFE 停止控制器：进入配置态以停止 EtherCAT 周期通信。</translation>
+    </message>
+    <message>
+        <source>The controller adapter instance changed during stop verification.</source>
+        <translation>停止验证期间控制器适配器实例发生变化。</translation>
+    </message>
+    <message>
+        <source>The controller session changed during stop verification.</source>
+        <translation>停止验证期间控制器会话发生变化。</translation>
+    </message>
+    <message>
+        <source>The controller disconnected during stop verification.</source>
+        <translation>停止验证期间控制器断开连接。</translation>
+    </message>
+    <message>
+        <source>Exclusive controller control was lost during stop verification.</source>
+        <translation>停止验证期间丢失了控制器独占控制权。</translation>
+    </message>
+    <message>
+        <source>Timed out before cyclic EtherCAT traffic was confirmed stopped.</source>
+        <translation>确认 EtherCAT 周期通信停止前已超时。</translation>
+    </message>
+    <message>
+        <source>A different controller operation replaced the stop sequence.</source>
+        <translation>其他控制器操作替换了当前停止流程。</translation>
+    </message>
+    <message>
+        <source>A controller stop step failed.</source>
+        <translation>控制器停止步骤失败。</translation>
+    </message>
+    <message>
+        <source>Controller stop completed in Shutdown and cyclic EtherCAT traffic is stopped, but controller faults remain (current 0x%1, latched 0x%2).</source>
+        <translation>控制器已在 Shutdown 状态完成停止，EtherCAT 周期通信已停止，但仍有控制器故障（当前 0x%1，锁存 0x%2）。</translation>
+    </message>
+    <message>
+        <source>Controller stop completed in Shutdown; cyclic EtherCAT traffic and Distributed Clocks runtime are stopped.</source>
+        <translation>控制器已在 Shutdown 状态完成停止；EtherCAT 周期通信及分布式时钟运行均已停止。</translation>
+    </message>
+    <message>
+        <source>Controller stop could not be verified: %1 Cyclic EtherCAT traffic may still be active.</source>
+        <translation>无法验证控制器已停止：%1 EtherCAT 周期通信可能仍在运行。</translation>
+    </message>
+    <message>
+        <source>Cycle configuration</source>
+        <translation>周期配置</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>应用</translation>
+    </message>
+    <message>
+        <source>EtherCAT master timing mode</source>
+        <translation>EtherCAT 主站时序模式</translation>
+    </message>
+    <message>
+        <source>EtherCAT master cycle period</source>
+        <translation>EtherCAT 主站循环周期</translation>
+    </message>
+    <message>
+        <source>Apply EtherCAT master cycle configuration</source>
+        <translation>应用 EtherCAT 主站循环周期配置</translation>
+    </message>
+    <message>
+        <source>Master cycle period in nanoseconds; it must match the selected bus configuration.</source>
+        <translation>主站循环周期，单位为纳秒；必须与所选总线配置一致。</translation>
+    </message>
+    <message>
+        <source>Enter a valid EtherCAT master cycle period from 1 through 4294967295 ns.</source>
+        <translation>请输入 1 到 4294967295 纳秒之间的有效 EtherCAT 主站循环周期。</translation>
+    </message>
+    <message>
+        <source>Cannot select FreeRun: %1</source>
+        <translation>无法选择 FreeRun：%1</translation>
+    </message>
+    <message>
+        <source>Cannot update the EtherCAT master cycle configuration: %1</source>
+        <translation>无法更新 EtherCAT 主站循环周期配置：%1</translation>
+    </message>
+    <message>
+        <source>EtherCAT master cycle configuration updated.</source>
+        <translation>EtherCAT 主站循环周期配置已更新。</translation>
+    </message>
+    <message>
+        <source>Stop Controller</source>
+        <translation>停止控制器</translation>
+    </message>
+    <message>
+        <source>Stopping Controller...</source>
+        <translation>正在停止控制器...</translation>
+    </message>
+    <message>
+        <source>Stop the application safely, then enter configuration so cyclic EtherCAT traffic and Distributed Clocks runtime stop. This is not an emergency stop.</source>
+        <translation>安全停止应用程序后进入配置态，使 EtherCAT 周期通信及分布式时钟运行停止。这不是紧急停止。</translation>
+    </message>
+    <message>
+        <source>alarm #%1: %2</source>
+        <translation>告警 #%1：%2</translation>
+    </message>
+    <message>
+        <source>Confirm / Reset Fault</source>
+        <translation>确认并复位故障</translation>
+    </message>
+    <message>
+        <source>Confirm and clear a latched controller fault only after its current cause has cleared. This does not restart the controller, rescan the bus, or change the active package.</source>
+        <translation>仅在当前故障原因已消失后确认并清除锁存故障。此操作不会重启控制器、重新扫描总线或更改活动软件包。</translation>
+    </message>
+    <message>
+        <source>%1 Unavailable: %2</source>
+        <translation>%1 不可用：%2</translation>
+    </message>
+    <message>
+        <source>Fault reset unavailable: %1</source>
+        <translation>故障复位不可用：%1</translation>
+    </message>
+    <message>
+        <source>UNSUPPORTED (-14): controlled fault reset requires Product API v1.11 and feature bit 12.</source>
+        <translation>UNSUPPORTED (-14)：受控故障复位需要 Product API v1.11 和功能位 12。</translation>
+    </message>
+    <message>
+        <source>Fault reset is available only while the controller is in Fault state.</source>
+        <translation>仅当控制器处于故障状态时才可复位故障。</translation>
+    </message>
+    <message>
+        <source>The current fault is still active. Resolve its cause before confirming it.</source>
+        <translation>当前故障仍处于活动状态。请先排除原因，再进行确认。</translation>
+    </message>
+    <message>
+        <source>There is no latched controller fault to confirm.</source>
+        <translation>没有可确认的控制器锁存故障。</translation>
+    </message>
+    <message>
+        <source>Refresh the controller because the latched fault has no alarm checkpoint.</source>
+        <translation>锁存故障没有告警检查点，请刷新控制器。</translation>
+    </message>
+    <message>
+        <source>Fault reset</source>
+        <translation>故障复位</translation>
+    </message>
+    <message>
+        <source> · </source>
+        <translation> · </translation>
+    </message>
+    <message>
+        <source>Fault reset failed</source>
+        <translation>故障复位失败</translation>
+    </message>
+    <message>
+        <source>latched before reset: %1</source>
+        <translation>复位前锁存：%1</translation>
+    </message>
+    <message>
+        <source>alarm checkpoint #%1</source>
+        <translation>告警检查点 #%1</translation>
+    </message>
+    <message>
+        <source>Action: Refresh state and alarms before attempting another fault reset.</source>
+        <translation>处理：请刷新状态和告警后再尝试故障复位。</translation>
+    </message>
+    <message>
+        <source>channel %1</source>
+        <translation>通道 %1</translation>
+    </message>
+    <message>
+        <source>stage %1 · %2</source>
+        <translation>阶段 %1 · %2</translation>
+    </message>
+    <message>
+        <source>final</source>
+        <translation>最终</translation>
+    </message>
+    <message>
+        <source>outcome unconfirmed</source>
+        <translation>结果未确认</translation>
+    </message>
+    <message>
+        <source> · status %1</source>
+        <translation> · 状态 %1</translation>
+    </message>
+    <message>
+        <source> · result %1</source>
+        <translation> · 结果 %1</translation>
+    </message>
+    <message>
+        <source>Refresh the controller and confirm the current latched fault first.</source>
+        <translation>请刷新控制器，并先确认当前锁存故障。</translation>
+    </message>
+    <message>
+        <source>The controller fault changed before confirmation. Refresh diagnostics and review the latest alarm.</source>
+        <translation>确认前控制器故障已发生变化。请刷新诊断并查看最新告警。</translation>
+    </message>
+    <message>
+        <source>Fault reset unavailable: Select the connected EtherCAT Master first.</source>
+        <translation>故障复位不可用：请先选择已连接的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source> Unavailable: %1</source>
+        <translation> 不可用：%1</translation>
+    </message>
+    <message>
+        <source> Unavailable: Select the connected EtherCAT Master.</source>
+        <translation> 不可用：请选择已连接的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source> cycles</source>
+        <translation> 个周期</translation>
+    </message>
+    <message>
+        <source>%1 to %2</source>
+        <translation>%1 至 %2</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>动作</translation>
+    </message>
+    <message>
+        <source>Action completed: %1</source>
+        <translation>动作已完成：%1</translation>
+    </message>
+    <message>
+        <source>Action failed: %1</source>
+        <translation>动作失败：%1</translation>
+    </message>
+    <message>
+        <source>Action failed: %1 (%2)</source>
+        <translation>动作失败：%1（%2）</translation>
+    </message>
+    <message>
+        <source>Action is not available in the current state.</source>
+        <translation>当前状态下无法执行此动作。</translation>
+    </message>
+    <message>
+        <source>Action is unavailable.</source>
+        <translation>动作不可用。</translation>
+    </message>
+    <message>
+        <source>Action lifetime in controller cycles</source>
+        <translation>动作有效期（控制器周期）</translation>
+    </message>
+    <message>
+        <source>Action parameters are invalid.</source>
+        <translation>动作参数无效。</translation>
+    </message>
+    <message>
+        <source>Action queued: %1</source>
+        <translation>动作已排队：%1</translation>
+    </message>
+    <message>
+        <source>Action result is unknown: %1</source>
+        <translation>动作结果未知：%1</translation>
+    </message>
+    <message>
+        <source>Action result is unknown: %1 (%2)</source>
+        <translation>动作结果未知：%1（%2）</translation>
+    </message>
+    <message>
+        <source>Action result is unknown: %1 (approval evidence invalid)</source>
+        <translation>动作结果未知：%1（确认凭据无效）</translation>
+    </message>
+    <message>
+        <source>Apply the current bus to the project and save it before signed, verified control can be enabled.</source>
+        <translation>请先将当前总线应用到项目并保存，才能启用经过签名验证的控制。</translation>
+    </message>
+    <message>
+        <source>Completed.</source>
+        <translation>已完成。</translation>
+    </message>
+    <message>
+        <source>Confirm action</source>
+        <translation>确认执行动作</translation>
+    </message>
+    <message>
+        <source>Confirmation canceled.</source>
+        <translation>已取消确认。</translation>
+    </message>
+    <message>
+        <source>Details</source>
+        <translation>详情</translation>
+    </message>
+    <message>
+        <source>Disabled by the signed action definition.</source>
+        <translation>签名动作定义已禁用此动作。</translation>
+    </message>
+    <message>
+        <source>Failed.</source>
+        <translation>失败。</translation>
+    </message>
+    <message>
+        <source>Lifetime</source>
+        <translation>有效期</translation>
+    </message>
+    <message>
+        <source>Live values and signed actions are available.</source>
+        <translation>在线值和签名动作可用。</translation>
+    </message>
+    <message>
+        <source>Local user</source>
+        <translation>本地用户</translation>
+    </message>
+    <message>
+        <source>Manual action operation status</source>
+        <translation>手动动作执行状态</translation>
+    </message>
+    <message>
+        <source>No live values or signed actions are available.</source>
+        <translation>没有可用的在线值或签名动作。</translation>
+    </message>
+    <message>
+        <source>No manual action is active.</source>
+        <translation>当前没有正在执行的手动动作。</translation>
+    </message>
+    <message>
+        <source>No signed action is selected.</source>
+        <translation>未选择签名动作。</translation>
+    </message>
+    <message>
+        <source>Not qualified for manual control.</source>
+        <translation>未通过手动控制验证。</translation>
+    </message>
+    <message>
+        <source>Parameter</source>
+        <translation>参数</translation>
+    </message>
+    <message>
+        <source>Queued.</source>
+        <translation>已排队。</translation>
+    </message>
+    <message>
+        <source>Ready for local confirmation.</source>
+        <translation>可进行本地确认。</translation>
+    </message>
+    <message>
+        <source>Result unknown.</source>
+        <translation>结果未知。</translation>
+    </message>
+    <message>
+        <source>Run action</source>
+        <translation>执行动作</translation>
+    </message>
+    <message>
+        <source>Run selected signed action</source>
+        <translation>执行所选签名动作</translation>
+    </message>
+    <message>
+        <source>Run “%1” with the entered values?</source>
+        <translation>使用已输入的值执行“%1”？</translation>
+    </message>
+    <message>
+        <source>Running.</source>
+        <translation>正在执行。</translation>
+    </message>
+    <message>
+        <source>Runtime context changed.</source>
+        <translation>运行时上下文已变化。</translation>
+    </message>
+    <message>
+        <source>Runtime context changed. Try again.</source>
+        <translation>运行时上下文已变化，请重试。</translation>
+    </message>
+    <message>
+        <source>Selected action status</source>
+        <translation>所选动作状态</translation>
+    </message>
+    <message>
+        <source>Signed action</source>
+        <translation>签名动作</translation>
+    </message>
+    <message>
+        <source>Signed action proof is incomplete.</source>
+        <translation>签名动作凭据不完整。</translation>
+    </message>
+    <message>
+        <source>Signed action proof is not verified.</source>
+        <translation>签名动作凭据未通过验证。</translation>
+    </message>
+    <message>
+        <source>Signed actions</source>
+        <translation>签名动作</translation>
+    </message>
+    <message>
+        <source>Signed actions are available.</source>
+        <translation>签名动作可用。</translation>
+    </message>
+    <message>
+        <source>Signed semantic actions</source>
+        <translation>签名语义动作</translation>
+    </message>
+    <message>
+        <source>Some live values are unavailable. Signed actions remain state-gated.</source>
+        <translation>部分在线值不可用。签名动作仍受状态约束。</translation>
+    </message>
+    <message>
+        <source>Speed unit conversion is not configured.</source>
+        <translation>未配置速度单位换算。</translation>
+    </message>
+    <message>
+        <source>This signed action requires confirmation by the local user.</source>
+        <translation>此签名动作需要本地用户确认。</translation>
+    </message>
+    <message>
+        <source>Waiting for confirmation</source>
+        <translation>等待确认</translation>
+    </message>
+    <message>
+        <source>Waiting for confirmation.</source>
+        <translation>等待确认。</translation>
+    </message>
+    <message>
+        <source>Waiting for local confirmation.</source>
+        <translation>等待本地确认。</translation>
+    </message>
+</context>
+<context>
+    <name>QtC::EtherCATProductApi</name>
+    <message>
+        <source>Expected an exact 64-byte AlarmEvent.</source>
+        <translation>需要精确的 64 字节 AlarmEvent。</translation>
+    </message>
+    <message>
+        <source>AlarmEvent frame flags are invalid.</source>
+        <translation>AlarmEvent 帧标志无效。</translation>
+    </message>
+    <message>
+        <source>AlarmEvent fields are invalid.</source>
+        <translation>AlarmEvent 字段无效。</translation>
+    </message>
+    <message>
+        <source>RuntimeError AlarmEvent has a nonzero reserved detail.</source>
+        <translation>RuntimeError AlarmEvent 的保留详情字段必须为零。</translation>
+    </message>
+    <message>
+        <source>Alarm code %1</source>
+        <translation>告警代码 %1</translation>
+    </message>
+    <message>
+        <source>State changed</source>
+        <translation>状态已切换</translation>
+    </message>
+    <message>
+        <source>state %1 -&gt; %2</source>
+        <translation>状态 %1 -&gt; %2</translation>
+    </message>
+    <message>
+        <source>Command rejected</source>
+        <translation>命令被拒绝</translation>
+    </message>
+    <message>
+        <source>command %1, result %2, state %3</source>
+        <translation>命令 %1，结果 %2，状态 %3</translation>
+    </message>
+    <message>
+        <source>Runtime error</source>
+        <translation>运行时错误</translation>
+    </message>
+    <message>
+        <source>result %1, phase %2</source>
+        <translation>结果 %1，阶段 %2</translation>
+    </message>
+    <message>
+        <source>OSL_ERR_TIMEOUT (%1), phase FAILED (%2)</source>
+        <translation>OSL_ERR_TIMEOUT（%1），阶段 FAILED（%2）</translation>
+    </message>
+    <message>
+        <source>OSL_ERR_CYCLE_LATE (%1), phase FAILED (%2)</source>
+        <translation>OSL_ERR_CYCLE_LATE（%1），阶段 FAILED（%2）</translation>
+    </message>
+    <message>
+        <source>DC drift</source>
+        <translation>DC 漂移</translation>
+    </message>
+    <message>
+        <source>measured %1 ns, warning %2 ns, fault %3 ns</source>
+        <translation>测量值 %1 ns，告警阈值 %2 ns，故障阈值 %3 ns</translation>
+    </message>
+    <message>
+        <source>fault mask 0x%1</source>
+        <translation>故障掩码 0x%1</translation>
+    </message>
+    <message>
+        <source>Safe output changed</source>
+        <translation>安全输出已变化</translation>
+    </message>
+    <message>
+        <source>safe output value %1</source>
+        <translation>安全输出值 %1</translation>
+    </message>
+    <message>
+        <source>Configuration failed</source>
+        <translation>配置失败</translation>
+    </message>
+    <message>
+        <source>result %1, generation %2, configuration %3</source>
+        <translation>结果 %1，代次 %2，配置 %3</translation>
+    </message>
+    <message>
+        <source>Configuration accepted</source>
+        <translation>配置已接受</translation>
+    </message>
+    <message>
+        <source>Network quick stop</source>
+        <translation>网络快速停止</translation>
+    </message>
+    <message>
+        <source>operator-requested non-safety stop</source>
+        <translation>操作员请求的非安全停止</translation>
+    </message>
+    <message>
+        <source>Activation diagnostic</source>
+        <translation>激活诊断</translation>
+    </message>
+    <message>
+        <source>phase %1, record %2, detail %3: attempt to write a read-only object</source>
+        <translation>阶段 %1，记录 %2，详情 %3：尝试写入只读对象</translation>
+    </message>
+    <message>
+        <source>phase %1, selector %2, detail %3</source>
+        <translation>阶段 %1，选择项 %2，详情 %3</translation>
+    </message>
+    <message>
+        <source>RX timeout</source>
+        <translation>接收超时</translation>
+    </message>
+    <message>
+        <source>TX %1, RX %2, pending %3, last frame %4</source>
+        <translation>发送 %1，接收 %2，待接收 %3，最后帧 %4</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid live alarm.</source>
+        <translation>控制器返回了无效的实时告警。</translation>
+    </message>
+    <message>
+        <source>Enter a controller IP address.</source>
+        <translation>请输入控制器 IP 地址。</translation>
+    </message>
+    <message>
+        <source>Use an IPv4 address with an optional base port.</source>
+        <translation type="vanished">请使用 IPv4 地址，可选择附加基础端口。</translation>
+    </message>
+    <message>
+        <source>Enter only the IPv4 controller address. Ports are fixed automatically.</source>
+        <translation>仅输入控制器 IPv4 地址。端口将自动固定配置。</translation>
+    </message>
+    <message>
+        <source>Controller IP:</source>
+        <translation>控制器 IP：</translation>
+    </message>
+    <message>
+        <source>Controller IP address</source>
+        <translation>控制器 IP 地址</translation>
+    </message>
+    <message>
+        <source>Enter only the IPv4 controller address. Control, Push, and Bulk always use ports 15200, 15201, and 15202.</source>
+        <translation>仅输入控制器 IPv4 地址。Control、Push 和 Bulk 始终使用端口 15200、15201 和 15202。</translation>
+    </message>
+    <message>
+        <source>Enter a valid IPv4 controller address.</source>
+        <translation>请输入有效的控制器 IPv4 地址。</translation>
+    </message>
+    <message>
+        <source>The base port must be between 1 and 65533.</source>
+        <translation type="vanished">基础端口必须介于 1 到 65533 之间。</translation>
+    </message>
+    <message>
+        <source>Embed Labs Product API</source>
+        <translation>Embed Labs 产品 API</translation>
+    </message>
+    <message>
+        <source>The controller endpoint is not configured.</source>
+        <translation>尚未配置控制器端点。</translation>
+    </message>
+    <message>
+        <source>The controller connection profile is unavailable.</source>
+        <translation>控制器连接配置不可用。</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT project and master first.</source>
+        <translation>请先选择 EtherCAT 项目和主站。</translation>
+    </message>
+    <message>
+        <source>The Embed Labs controller provider is unavailable.</source>
+        <translation>Embed Labs 控制器提供程序不可用。</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT project and master before connecting.</source>
+        <translation>连接前请选择 EtherCAT 项目和主站。</translation>
+    </message>
+    <message>
+        <source>The selected controller profile is not available.</source>
+        <translation>所选控制器配置不可用。</translation>
+    </message>
+    <message>
+        <source>Control</source>
+        <translation>控制通道</translation>
+    </message>
+    <message>
+        <source>Push</source>
+        <translation>推送通道</translation>
+    </message>
+    <message>
+        <source>Bulk</source>
+        <translation>批量通道</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed protocol frame.</source>
+        <translation>控制器返回了格式错误的协议帧。</translation>
+    </message>
+    <message>
+        <source>The controller channel connection failed.</source>
+        <translation>控制器通道连接失败。</translation>
+    </message>
+    <message>
+        <source>The controller closed the channel.</source>
+        <translation>控制器关闭了通道。</translation>
+    </message>
+    <message>
+        <source>The controller channel connection timed out.</source>
+        <translation>控制器通道连接超时。</translation>
+    </message>
+    <message>
+        <source>The controller request could not be queued.</source>
+        <translation>控制器请求无法加入发送队列。</translation>
+    </message>
+    <message>
+        <source>The controller response timed out.</source>
+        <translation>等待控制器响应超时。</translation>
+    </message>
+    <message>
+        <source>The controller handshake could not be encoded.</source>
+        <translation>无法编码控制器握手请求。</translation>
+    </message>
+    <message>
+        <source>The controller request could not be encoded.</source>
+        <translation>无法编码控制器请求。</translation>
+    </message>
+    <message>
+        <source>The event subscription could not be encoded.</source>
+        <translation>无法编码事件订阅请求。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid handshake error.</source>
+        <translation>控制器返回了无效的握手错误。</translation>
+    </message>
+    <message>
+        <source>The controller session capacity is exhausted.</source>
+        <translation>控制器会话容量已用尽。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid handshake.</source>
+        <translation>控制器返回了无效的握手响应。</translation>
+    </message>
+    <message>
+        <source>The controller is missing required protocol features.</source>
+        <translation>控制器缺少必需的协议功能。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid channel payload limit.</source>
+        <translation>控制器返回了无效的通道负载上限。</translation>
+    </message>
+    <message>
+        <source>The resumed controller session changed BootId.</source>
+        <translation>恢复的控制器会话更改了 BootId。</translation>
+    </message>
+    <message>
+        <source>The controller channels disagree on session identity.</source>
+        <translation>控制器各通道的会话标识不一致。</translation>
+    </message>
+    <message>
+        <source>The controller response has a stale session identity.</source>
+        <translation>控制器响应包含过期的会话标识。</translation>
+    </message>
+    <message>
+        <source>The controller rejected a read-only request.</source>
+        <translation>控制器拒绝了只读请求。</translation>
+    </message>
+    <message>
+        <source>CommandStatus does not match the pending control request.</source>
+        <translation>CommandStatus 与当前待处理的控制请求不匹配。</translation>
+    </message>
+    <message>
+        <source>Failed CommandStatus skipped an expected control stage.</source>
+        <translation>失败的 CommandStatus 跳过了预期的控制阶段。</translation>
+    </message>
+    <message>
+        <source>CommandStatus stages are not contiguous for the control request.</source>
+        <translation>CommandStatus 的控制请求阶段不连续。</translation>
+    </message>
+    <message>
+        <source>CommandStatus final flag does not match the control request contract.</source>
+        <translation>CommandStatus 的 final 标志与控制请求约定不匹配。</translation>
+    </message>
+    <message>
+        <source>Heartbeat did not complete at stage 4.</source>
+        <translation>心跳未在第 4 阶段完成。</translation>
+    </message>
+    <message>
+        <source>The controller returned an unknown RequestId.</source>
+        <translation>控制器返回了未知的 RequestId。</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed error status.</source>
+        <translation>控制器返回了格式错误的状态响应。</translation>
+    </message>
+    <message>
+        <source>The package-state response does not match the request.</source>
+        <translation>软件包状态响应与请求不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid operation result.</source>
+        <translation>控制器返回了无效的操作结果。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid event subscription result.</source>
+        <translation>控制器返回了无效的事件订阅结果。</translation>
+    </message>
+    <message>
+        <source>The event subscription checkpoint does not match the request.</source>
+        <translation>事件订阅检查点与请求不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller event history has a gap.</source>
+        <translation>控制器事件历史存在缺口。</translation>
+    </message>
+    <message>
+        <source>The controller could not establish event recovery.</source>
+        <translation>控制器无法建立事件恢复。</translation>
+    </message>
+    <message>
+        <source>An unrelated frame interrupted the event replay.</source>
+        <translation>无关帧中断了事件重放。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid alarm event.</source>
+        <translation>控制器返回了无效的告警事件。</translation>
+    </message>
+    <message>
+        <source>The controller event replay is not contiguous.</source>
+        <translation>控制器事件重放不连续。</translation>
+    </message>
+    <message>
+        <source>The controller event replay ended at the wrong checkpoint.</source>
+        <translation>控制器事件重放在错误的检查点结束。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid replaceable push frame.</source>
+        <translation>控制器返回了无效的可替换推送帧。</translation>
+    </message>
+    <message>
+        <source>The controller returned an uncorrelated channel frame.</source>
+        <translation>控制器返回了无法关联请求的通道帧。</translation>
+    </message>
+    <message>
+        <source>The push frame has a stale session identity.</source>
+        <translation>推送帧包含过期的会话标识。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid asynchronous event status.</source>
+        <translation>控制器返回了无效的异步事件状态。</translation>
+    </message>
+    <message>
+        <source>A live alarm arrived before an event checkpoint.</source>
+        <translation>建立事件检查点前收到了实时告警。</translation>
+    </message>
+    <message>
+        <source>The live controller alarm sequence has a gap.</source>
+        <translation>控制器实时告警序列存在缺口。</translation>
+    </message>
+    <message>
+        <source>The controller returned an unknown push message.</source>
+        <translation>控制器返回了未知的推送消息。</translation>
+    </message>
+    <message>
+        <source>The controller session is shutting down.</source>
+        <translation>控制器会话正在关闭。</translation>
+    </message>
+    <message>
+        <source>The controller endpoint is not valid.</source>
+        <translation>控制器端点无效。</translation>
+    </message>
+    <message>
+        <source>Disconnect the controller before changing its endpoint.</source>
+        <translation>请先断开控制器连接，再更改其端点。</translation>
+    </message>
+    <message>
+        <source>The controller connection request is incomplete.</source>
+        <translation>控制器连接请求不完整。</translation>
+    </message>
+    <message>
+        <source>A controller connection operation is already active.</source>
+        <translation>已有控制器连接操作正在进行。</translation>
+    </message>
+    <message>
+        <source>Connect to the controller before refreshing.</source>
+        <translation>刷新前请先连接控制器。</translation>
+    </message>
+    <message>
+        <source>A controller refresh is already active.</source>
+        <translation>已有控制器刷新操作正在进行。</translation>
+    </message>
+    <message>
+        <source>Acquire control</source>
+        <translation>获取控制权</translation>
+    </message>
+    <message>
+        <source>Release control</source>
+        <translation>释放控制权</translation>
+    </message>
+    <message>
+        <source>The controller reports that the control lease is already owned.</source>
+        <translation>控制器报告控制租约已被占用。</translation>
+    </message>
+    <message>
+        <source>Enter configuration mode</source>
+        <translation>进入配置模式</translation>
+    </message>
+    <message>
+        <source>Discover topology</source>
+        <translation>扫描拓扑</translation>
+    </message>
+    <message>
+        <source>Restore active package</source>
+        <translation>恢复活动软件包</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>启动</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>暂停</translation>
+    </message>
+    <message>
+        <source>Resume</source>
+        <translation>恢复运行</translation>
+    </message>
+    <message>
+        <source>Controlled stop</source>
+        <translation>受控停止</translation>
+    </message>
+    <message>
+        <source>No operation</source>
+        <translation>无操作</translation>
+    </message>
+    <message>
+        <source>Unknown operation</source>
+        <translation>未知操作</translation>
+    </message>
+    <message>
+        <source>The controller operation was interrupted before a final response.</source>
+        <translation>控制器操作在收到最终响应前被中断。</translation>
+    </message>
+    <message>
+        <source>The controller operation timed out; its final state is unknown.</source>
+        <translation>控制器操作超时；其最终状态未知。</translation>
+    </message>
+    <message>
+        <source>The controller rejected the control request.</source>
+        <translation>控制器拒绝了控制请求。</translation>
+    </message>
+    <message>
+        <source>%1 was rejected by the controller.</source>
+        <translation>控制器拒绝了“%1”。</translation>
+    </message>
+    <message>
+        <source>The command was rejected; refreshing authoritative controller state.</source>
+        <translation>命令被拒绝；正在刷新控制器权威状态。</translation>
+    </message>
+    <message>
+        <source>%1 was accepted; confirming the resulting controller state.</source>
+        <translation>已接受“%1”；正在确认控制器执行后的状态。</translation>
+    </message>
+    <message>
+        <source>%1 completed successfully.</source>
+        <translation>“%1”已成功完成。</translation>
+    </message>
+    <message>
+        <source>%1: stage %2 of 4.</source>
+        <translation>%1：第 %2/4 阶段。</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed control status.</source>
+        <translation>控制器返回了格式错误的控制状态。</translation>
+    </message>
+    <message>
+        <source>The topology result arrived before all command stages completed.</source>
+        <translation>尚未完成全部命令阶段就收到了拓扑结果。</translation>
+    </message>
+    <message>
+        <source>Discovered %1 EtherCAT devices.</source>
+        <translation>已发现 %1 个 EtherCAT 设备。</translation>
+    </message>
+    <message>
+        <source>The package result arrived before all command stages completed.</source>
+        <translation>尚未完成全部命令阶段就收到了软件包结果。</translation>
+    </message>
+    <message>
+        <source>The package restore result does not match the request.</source>
+        <translation>软件包恢复结果与请求不匹配。</translation>
+    </message>
+    <message>
+        <source>The active controller package was restored; confirming the resulting controller state.</source>
+        <translation>已恢复控制器活动软件包；正在确认执行后的控制器状态。</translation>
+    </message>
+    <message>
+        <source>the session to own the control lease</source>
+        <translation>当前会话持有控制租约</translation>
+    </message>
+    <message>
+        <source>SHUTDOWN with no active CPU1 package</source>
+        <translation>处于 SHUTDOWN，且没有活动的 CPU1 软件包</translation>
+    </message>
+    <message>
+        <source>OP_SAFE with an active package, OP bus, matching working counters, and no faults</source>
+        <translation>处于 OP_SAFE，活动软件包已加载、总线处于 OP、工作计数器匹配且无故障</translation>
+    </message>
+    <message>
+        <source>RUNNING with an active package, OP bus, matching working counters, and no faults</source>
+        <translation>处于 RUNNING，活动软件包已加载、总线处于 OP、工作计数器匹配且无故障</translation>
+    </message>
+    <message>
+        <source>PAUSED with an active package, OP bus, and matching working counters</source>
+        <translation>处于 PAUSED，活动软件包已加载、总线处于 OP 且工作计数器匹配</translation>
+    </message>
+    <message>
+        <source>OP_SAFE with an active package, OP bus, and matching working counters</source>
+        <translation>处于 OP_SAFE，活动软件包已加载、总线处于 OP 且工作计数器匹配</translation>
+    </message>
+    <message>
+        <source>%1 was accepted, but the refreshed controller state did not reach %2.</source>
+        <translation>已接受“%1”，但刷新后的控制器状态未达到“%2”。</translation>
+    </message>
+    <message>
+        <source>The controller accepted the command, but its resulting state could not be confirmed.</source>
+        <translation>控制器已接受命令，但无法确认其执行后的状态。</translation>
+    </message>
+    <message>
+        <source>%1 was rejected; the authoritative controller state was refreshed.</source>
+        <translation>“%1”被拒绝；已刷新控制器权威状态。</translation>
+    </message>
+    <message>
+        <source>%1 completed successfully and its resulting state was confirmed.</source>
+        <translation>“%1”已成功完成，并已确认其执行后的状态。</translation>
+    </message>
+    <message>
+        <source>Wait for the active controller operation to finish.</source>
+        <translation>请等待当前控制器操作完成。</translation>
+    </message>
+    <message>
+        <source>The requested controller command is not supported.</source>
+        <translation>不支持请求的控制器命令。</translation>
+    </message>
+    <message>
+        <source>Connect to the controller before sending commands.</source>
+        <translation>发送命令前请先连接控制器。</translation>
+    </message>
+    <message>
+        <source>The controller session identity is not available.</source>
+        <translation>控制器会话标识不可用。</translation>
+    </message>
+    <message>
+        <source>Wait for the controller refresh to finish.</source>
+        <translation>请等待控制器刷新完成。</translation>
+    </message>
+    <message>
+        <source>Another controller operation is already active.</source>
+        <translation>另一个控制器操作正在进行。</translation>
+    </message>
+    <message>
+        <source>This session already owns the control lease.</source>
+        <translation>当前会话已持有控制租约。</translation>
+    </message>
+    <message>
+        <source>The control lease duration must be between 1 and 30000 ms.</source>
+        <translation>控制租约时长必须在 1 到 30000 毫秒之间。</translation>
+    </message>
+    <message>
+        <source>Acquire the control lease before this operation.</source>
+        <translation>执行此操作前请先获取控制租约。</translation>
+    </message>
+    <message>
+        <source>The controller is not ready for the selected control operation.</source>
+        <translation>控制器尚未准备好执行所选控制操作。</translation>
+    </message>
+    <message>
+        <source>Configuration mode is not allowed from the current controller state.</source>
+        <translation>当前控制器状态不允许进入配置模式。</translation>
+    </message>
+    <message>
+        <source>Enter configuration mode before scanning the EtherCAT bus.</source>
+        <translation>扫描 EtherCAT 总线前请先进入配置模式。</translation>
+    </message>
+    <message>
+        <source>The topology scan range is invalid.</source>
+        <translation>拓扑扫描范围无效。</translation>
+    </message>
+    <message>
+        <source>The active controller package must be stopped before scanning the bus.</source>
+        <translation>扫描总线前必须停止控制器的活动软件包。</translation>
+    </message>
+    <message>
+        <source>The active package cannot be restored from the current state.</source>
+        <translation>当前状态下无法恢复活动软件包。</translation>
+    </message>
+    <message>
+        <source>No exact persistent active-package selector is available.</source>
+        <translation>没有可用的精确持久化活动软件包选择器。</translation>
+    </message>
+    <message>
+        <source>Pause requires a running controller with an active package.</source>
+        <translation>暂停要求控制器处于 RUNNING，且活动软件包已加载。</translation>
+    </message>
+    <message>
+        <source>Resume requires PAUSED, an operational bus with matching working counters, and no faults.</source>
+        <translation>恢复运行要求控制器处于 PAUSED，总线处于 OP 且工作计数器匹配，并且无故障。</translation>
+    </message>
+    <message>
+        <source>Controlled stop requires a running or paused controller with an active package.</source>
+        <translation>受控停止要求控制器处于 RUNNING 或 PAUSED，且活动软件包已加载。</translation>
+    </message>
+    <message>
+        <source>The controller command could not be sent.</source>
+        <translation>无法发送控制器命令。</translation>
+    </message>
+    <message>
+        <source>Embed Labs Product API v1.10</source>
+        <translation>Embed Labs 产品 API v1.10</translation>
+    </message>
+    <message>
+        <source>Start free-run</source>
+        <translation>启动自由运行</translation>
+    </message>
+    <message>
+        <source>Start distributed clocks</source>
+        <translation>启动分布式时钟运行</translation>
+    </message>
+    <message>
+        <source>Starting requires OP_SAFE, an active package, an operational bus with matching working counters, and no faults.</source>
+        <translation>启动要求控制器处于 OP_SAFE，活动软件包已加载，总线处于 OP 且工作计数器匹配，并且无故障。</translation>
+    </message>
+    <message>
+        <source>Disconnect requires a ready controller in SHUTDOWN or OP_SAFE before releasing control.</source>
+        <translation>断开连接并释放控制权前，控制器必须已就绪且处于 SHUTDOWN 或 OP_SAFE。</translation>
+    </message>
+    <message>
+        <source>The controller control lease ownership is unverified for this session.</source>
+        <translation>当前会话的控制器控制租约归属尚未验证。</translation>
+    </message>
+    <message>
+        <source>The Release control request was not queued; the controller still reports this session as the lease owner.</source>
+        <translation>释放控制权请求未进入发送队列；控制器仍报告当前会话为租约持有者。</translation>
+    </message>
+    <message>
+        <source>The Release control result is unknown because the connection ended before confirmation.</source>
+        <translation>连接在确认前已结束，因此释放控制权的结果未知。</translation>
+    </message>
+    <message>
+        <source>Release control requires a ready controller in SHUTDOWN or OP_SAFE.</source>
+        <translation>释放控制权要求控制器已就绪且处于 SHUTDOWN 或 OP_SAFE。</translation>
+    </message>
+    <message>
+        <source>%1 was rejected; the authoritative controller state could not be refreshed.</source>
+        <translation>“%1”被拒绝；无法刷新控制器权威状态。</translation>
+    </message>
+    <message>
+        <source>Timing mode mismatch: requested %1, but the active package is %2.</source>
+        <translation>时序模式不匹配：请求为 %1，但活动软件包为 %2。</translation>
+    </message>
+    <message>
+        <source>The package capability descriptor does not match this controller. Rebuild the package from the current Capability descriptor.</source>
+        <translation>软件包能力描述符与此控制器不匹配。请使用控制器当前的能力描述符重新构建软件包。</translation>
+    </message>
+    <message>
+        <source>The request message type is not supported.</source>
+        <translation>不支持该请求消息类型。</translation>
+    </message>
+    <message>
+        <source>Explicit timing-mode start requires protocol v1.10.</source>
+        <translation>显式定时模式启动需要 Product API v1.10。</translation>
+    </message>
+    <message>
+        <source>TIMING_MODE_MISMATCH fields violate the v1.10 contract.</source>
+        <translation>TIMING_MODE_MISMATCH 字段不符合 v1.10 协议约定。</translation>
+    </message>
+    <message>
+        <source>FirmwareStatus requires Product API v1.9 or newer.</source>
+        <translation>FirmwareStatus 需要 Product API v1.9 或更高版本。</translation>
+    </message>
+    <message>
+        <source>Expected a complete TopologyResult.</source>
+        <translation>需要完整的 TopologyResult。</translation>
+    </message>
+    <message>
+        <source>TopologyResult has an invalid response envelope.</source>
+        <translation>TopologyResult 的响应封装无效。</translation>
+    </message>
+    <message>
+        <source>TopologyResult fields violate the discovery contract.</source>
+        <translation>TopologyResult 字段不符合总线发现协议约定。</translation>
+    </message>
+    <message>
+        <source>TopologyResult contains an invalid station address.</source>
+        <translation>TopologyResult 包含无效的站地址。</translation>
+    </message>
+    <message>
+        <source>Package deployment started for operation %1.</source>
+        <translation>操作 %1 的软件包部署已开始。</translation>
+    </message>
+    <message>
+        <source>A best-effort package upload abort was queued during shutdown.</source>
+        <translation>关闭期间已将尽力中止软件包上传的请求加入队列。</translation>
+    </message>
+    <message>
+        <source>The session shut down before the package upload abort was confirmed.</source>
+        <translation>软件包上传中止得到确认前，会话已关闭。</translation>
+    </message>
+    <message>
+        <source>The session shut down before the package operation result was confirmed.</source>
+        <translation>软件包操作结果得到确认前，会话已关闭。</translation>
+    </message>
+    <message>
+        <source>The deployment result is unknown because the controller returned an invalid protocol response.</source>
+        <translation>控制器返回了无效的协议响应，因此部署结果未知。</translation>
+    </message>
+    <message>
+        <source>The deployment request was not queued.</source>
+        <translation>部署请求未加入发送队列。</translation>
+    </message>
+    <message>
+        <source>The deployment result is unknown because the connection ended before confirmation.</source>
+        <translation>连接在确认前已结束，因此部署结果未知。</translation>
+    </message>
+    <message>
+        <source>The deployment request was not queued because the connection failed.</source>
+        <translation>连接失败，因此部署请求未加入发送队列。</translation>
+    </message>
+    <message>
+        <source>%1 request queued.</source>
+        <translation>%1 请求已加入发送队列。</translation>
+    </message>
+    <message>
+        <source>Committing the uploaded controller package.</source>
+        <translation>正在提交已上传的控制器软件包。</translation>
+    </message>
+    <message>
+        <source>Validating the staged controller package.</source>
+        <translation>正在校验已暂存的控制器软件包。</translation>
+    </message>
+    <message>
+        <source>Activating the validated controller package.</source>
+        <translation>正在激活已校验的控制器软件包。</translation>
+    </message>
+    <message>
+        <source>Rolling back after package activation failed.</source>
+        <translation>软件包激活失败，正在回滚。</translation>
+    </message>
+    <message>
+        <source>Activation failed; confirming the exact active package before rollback.</source>
+        <translation>激活失败；正在回滚前确认精确的活动软件包。</translation>
+    </message>
+    <message>
+        <source>Authoritative package-state recovery query queued.</source>
+        <translation>权威软件包状态恢复查询已加入发送队列。</translation>
+    </message>
+    <message>
+        <source>Canceling the package upload.</source>
+        <translation>正在取消软件包上传。</translation>
+    </message>
+    <message>
+        <source>Aborting the failed package upload.</source>
+        <translation>正在中止失败的软件包上传。</translation>
+    </message>
+    <message>
+        <source>The controller rejected the package deployment request.</source>
+        <translation>控制器拒绝了软件包部署请求。</translation>
+    </message>
+    <message>
+        <source>Package deployment failed with %1.</source>
+        <translation>软件包部署失败：%1。</translation>
+    </message>
+    <message>
+        <source>The deployment result is unknown because the controller session became stale.</source>
+        <translation>控制器会话已过期，因此部署结果未知。</translation>
+    </message>
+    <message>
+        <source>%1 The active package could not be confirmed, so no rollback was sent.</source>
+        <translation>%1 无法确认活动软件包，因此未发送回滚请求。</translation>
+    </message>
+    <message>
+        <source>BulkStatus does not match the deployment request.</source>
+        <translation>BulkStatus 与部署请求不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller accepted the package deployment request.</source>
+        <translation>控制器已接受软件包部署请求。</translation>
+    </message>
+    <message>
+        <source>Package deployment was canceled before activation.</source>
+        <translation>软件包部署已在激活前取消。</translation>
+    </message>
+    <message>
+        <source>Uploaded %1 of %2 bytes.</source>
+        <translation>已上传 %1/%2 字节。</translation>
+    </message>
+    <message>
+        <source>BulkCommit returned an invalid package selector.</source>
+        <translation>BulkCommit 返回了无效的软件包选择器。</translation>
+    </message>
+    <message>
+        <source>The committed package could not be queued for validation.</source>
+        <translation>无法将已提交软件包的校验请求加入发送队列。</translation>
+    </message>
+    <message>
+        <source>An unexpected bulk deployment response was received.</source>
+        <translation>收到了意外的批量部署响应。</translation>
+    </message>
+    <message>
+        <source>CommandStatus does not match the package request.</source>
+        <translation>CommandStatus 与软件包请求不匹配。</translation>
+    </message>
+    <message>
+        <source>Package CommandStatus stages violate the deployment contract.</source>
+        <translation>软件包 CommandStatus 阶段不符合部署协议约定。</translation>
+    </message>
+    <message>
+        <source>Package command stage %1 of 4 completed.</source>
+        <translation>软件包命令阶段 %1/4 已完成。</translation>
+    </message>
+    <message>
+        <source>The recovery PackageState does not match GetPackageState.</source>
+        <translation>恢复查询的 PackageState 与 GetPackageState 不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller rejected the package-state recovery query.</source>
+        <translation>控制器拒绝了软件包状态恢复查询。</translation>
+    </message>
+    <message>
+        <source>%1 No exact active/fallback package pair is available, so no rollback was sent.</source>
+        <translation>%1 没有可用的精确活动/回退软件包对，因此未发送回滚请求。</translation>
+    </message>
+    <message>
+        <source>%1 The current active package is neither the candidate nor the confirmed fallback, so no rollback was sent.</source>
+        <translation>%1 当前活动软件包既不是候选包，也不是已确认的回退包，因此未发送回滚请求。</translation>
+    </message>
+    <message>
+        <source>Confirmed the exact active selector before rollback.</source>
+        <translation>已在回滚前确认精确的活动软件包选择器。</translation>
+    </message>
+    <message>
+        <source>%1 The confirmed rollback request could not be queued.</source>
+        <translation>%1 无法将已确认的回滚请求加入发送队列。</translation>
+    </message>
+    <message>
+        <source>PackageState arrived before all package command stages completed.</source>
+        <translation>所有软件包命令阶段完成前收到了 PackageState。</translation>
+    </message>
+    <message>
+        <source>PackageState does not match the package request.</source>
+        <translation>PackageState 与软件包请求不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller could not return a coherent final package state.</source>
+        <translation>控制器无法返回一致的最终软件包状态。</translation>
+    </message>
+    <message>
+        <source>All package command stages completed, but the final package state was not coherent. Authoritative state is being refreshed before any further action.</source>
+        <translation>所有软件包命令阶段均已完成，但最终软件包状态不一致。正在刷新权威状态，完成前不会执行后续操作。</translation>
+    </message>
+    <message>
+        <source>No committed package selector is available.</source>
+        <translation>没有可用的已提交软件包选择器。</translation>
+    </message>
+    <message>
+        <source>The controller returned the authoritative package state.</source>
+        <translation>控制器已返回权威软件包状态。</translation>
+    </message>
+    <message>
+        <source>The validated package state does not match the committed package.</source>
+        <translation>已校验的软件包状态与已提交软件包不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller package was uploaded and validated.</source>
+        <translation>控制器软件包已上传并通过校验。</translation>
+    </message>
+    <message>
+        <source>The active package state does not match the deployed package.</source>
+        <translation>活动软件包状态与已部署软件包不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller package was uploaded, validated, and activated.</source>
+        <translation>控制器软件包已上传、校验并激活。</translation>
+    </message>
+    <message>
+        <source>Rollback did not restore the exact previously confirmed active package.</source>
+        <translation>回滚未恢复此前精确确认的活动软件包。</translation>
+    </message>
+    <message>
+        <source>Package activation failed and rollback completed.</source>
+        <translation>软件包激活失败，回滚已完成。</translation>
+    </message>
+    <message>
+        <source>%1 Rollback completed.</source>
+        <translation>%1 回滚已完成。</translation>
+    </message>
+    <message>
+        <source>An unexpected package-state response was received.</source>
+        <translation>收到了意外的软件包状态响应。</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed package upload status.</source>
+        <translation>控制器返回了格式错误的软件包上传状态。</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed recovery package state.</source>
+        <translation>控制器返回了格式错误的恢复软件包状态。</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed package command response.</source>
+        <translation>控制器返回了格式错误的软件包命令响应。</translation>
+    </message>
+    <message>
+        <source>Wait for the package deployment to finish.</source>
+        <translation>请等待软件包部署完成。</translation>
+    </message>
+    <message>
+        <source>Package deployment is not supported.</source>
+        <translation>不支持软件包部署。</translation>
+    </message>
+    <message>
+        <source>OperationId must contain between 1 and 128 non-control characters.</source>
+        <translation>OperationId 必须包含 1 至 128 个非控制字符。</translation>
+    </message>
+    <message>
+        <source>The controller package must contain between 1 and 16777216 bytes.</source>
+        <translation>控制器软件包大小必须为 1 至 16777216 字节。</translation>
+    </message>
+    <message>
+        <source>The package configuration ID must be nonzero.</source>
+        <translation>软件包配置 ID 必须为非零值。</translation>
+    </message>
+    <message>
+        <source>OperationId is already bound to a different package deployment.</source>
+        <translation>OperationId 已绑定到另一个软件包部署。</translation>
+    </message>
+    <message>
+        <source>Connect to the controller before deploying a package.</source>
+        <translation>部署软件包前请先连接控制器。</translation>
+    </message>
+    <message>
+        <source>Acquire the control lease before deploying a package.</source>
+        <translation>部署软件包前请先获取控制租约。</translation>
+    </message>
+    <message>
+        <source>The controller does not support transactional package upload.</source>
+        <translation>控制器不支持事务式软件包上传。</translation>
+    </message>
+    <message>
+        <source>Enter configuration mode before deploying a controller package.</source>
+        <translation>部署控制器软件包前请先进入配置模式。</translation>
+    </message>
+    <message>
+        <source>Another package deployment is already active.</source>
+        <translation>另一个软件包部署正在进行。</translation>
+    </message>
+    <message>
+        <source>The package upload could not be started.</source>
+        <translation>无法启动软件包上传。</translation>
+    </message>
+    <message>
+        <source>The package deployment OperationId does not match.</source>
+        <translation>软件包部署 OperationId 不匹配。</translation>
+    </message>
+    <message>
+        <source>Package deployment can only be canceled before validation begins.</source>
+        <translation>只能在校验开始前取消软件包部署。</translation>
+    </message>
+    <message>
+        <source>Package deployment cancellation requested.</source>
+        <translation>已请求取消软件包部署。</translation>
+    </message>
+    <message>
+        <source>The package upload cancellation could not be sent.</source>
+        <translation>无法发送软件包上传取消请求。</translation>
+    </message>
+    <message>
+        <source>Controlled fault reset requires protocol v1.11.</source>
+        <translation>受控故障复位需要 Product API 协议 v1.11。</translation>
+    </message>
+    <message>
+        <source>Fault cleared</source>
+        <translation>故障已清除</translation>
+    </message>
+    <message>
+        <source>TX %1, RX %2, pending unavailable, last frame %3</source>
+        <translation>TX %1，RX %2，待处理数量不可用，最后一帧 %3</translation>
+    </message>
+    <message>
+        <source>Fault reset</source>
+        <translation>故障复位</translation>
+    </message>
+    <message>
+        <source>ERR_FAULT_ACTIVE (-6): current fault mask 0x%1 is still active. Resolve the cause before confirming the latch.</source>
+        <translation>ERR_FAULT_ACTIVE (-6)：当前故障掩码 0x%1 仍处于活动状态。请先排除原因，再确认清除锁存。</translation>
+    </message>
+    <message>
+        <source>ERR_STALE_CONFIRMATION (-9): the latest alarm sequence is %1. Refresh diagnostics and confirm the new snapshot.</source>
+        <translation>ERR_STALE_CONFIRMATION (-9)：最新告警序列为 %1。请刷新诊断并确认新快照。</translation>
+    </message>
+    <message>
+        <source>ERR_STATE (-3): fault reset requires the controller to remain in Fault state.</source>
+        <translation>ERR_STATE (-3)：故障复位要求控制器保持故障状态。</translation>
+    </message>
+    <message>
+        <source>ERR_ARGUMENT (-4): the controller rejected the fault confirmation payload.</source>
+        <translation>ERR_ARGUMENT (-4)：控制器拒绝了故障确认负载。</translation>
+    </message>
+    <message>
+        <source>ERR_UNSUPPORTED (-7): the controller does not support controlled fault reset.</source>
+        <translation>ERR_UNSUPPORTED (-7)：控制器不支持受控故障复位。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but its confirmation snapshot is unavailable.</source>
+        <translation>故障复位已被接受，但确认快照不可用。</translation>
+    </message>
+    <message>
+        <source>Fault reset completed, but this session no longer owns the lease.</source>
+        <translation>故障复位已完成，但当前会话已不再持有控制租约。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but the refreshed controller state is unavailable.</source>
+        <translation>故障复位已被接受，但刷新后的控制器状态不可用。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but the refreshed fault state is current 0x%1, latched 0x%2.</source>
+        <translation>故障复位已被接受，但刷新后的故障状态为当前故障 0x%1、锁存故障 0x%2。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted for an active package without a safe cyclic runtime.</source>
+        <translation>故障复位已被接受，但软件包仍处于活动状态，且安全周期运行时并未运行。</translation>
+    </message>
+    <message>
+        <source>OP_SAFE</source>
+        <translation>OP_SAFE</translation>
+    </message>
+    <message>
+        <source>SHUTDOWN</source>
+        <translation>SHUTDOWN</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but the controller did not reach the expected %1 state.</source>
+        <translation>故障复位已被接受，但控制器未进入预期的 %1 状态。</translation>
+    </message>
+    <message>
+        <source>Fault reset reported SHUTDOWN while a controller runtime remained active.</source>
+        <translation>故障复位报告 SHUTDOWN，但控制器运行时仍处于活动状态。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but AlarmCleared sequence %1 was expected and sequence %2 was confirmed.</source>
+        <translation>故障复位已被接受，但预期 AlarmCleared 序列 %1，实际确认序列为 %2。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but the matching AlarmCleared event was not confirmed.</source>
+        <translation>故障复位已被接受，但未确认匹配的 AlarmCleared 事件。</translation>
+    </message>
+    <message>
+        <source>Fault reset cleared the latch, but the controller package state changed.</source>
+        <translation>故障复位已清除锁存，但控制器软件包状态发生了变化。</translation>
+    </message>
+    <message>
+        <source>Fault reset cleared the latch, but the controller runtime state changed.</source>
+        <translation>故障复位已清除锁存，但控制器运行状态发生了变化。</translation>
+    </message>
+    <message>
+        <source>No latched fault remains; no controller request was sent.</source>
+        <translation>已无锁存故障；未向控制器发送请求。</translation>
+    </message>
+    <message>
+        <source>The controller state is unavailable.</source>
+        <translation>控制器状态不可用。</translation>
+    </message>
+    <message>
+        <source>Fault reset is available only while the controller is in Fault state.</source>
+        <translation>仅当控制器处于故障状态时才可复位故障。</translation>
+    </message>
+    <message>
+        <source>The current fault is still active (0x%1). Resolve its cause first.</source>
+        <translation>当前故障仍处于活动状态（0x%1）。请先排除原因。</translation>
+    </message>
+    <message>
+        <source>Refresh the controller before confirming the latched fault.</source>
+        <translation>确认锁存故障前请先刷新控制器。</translation>
+    </message>
+    <message>
+        <source>The fault confirmation snapshot is invalid.</source>
+        <translation>故障确认快照无效。</translation>
+    </message>
+    <message>
+        <source>The controller fault changed before confirmation. Refresh diagnostics and review the latest alarm.</source>
+        <translation>确认前控制器故障已发生变化。请刷新诊断并查看最新告警。</translation>
+    </message>
+    <message>
+        <source>UNSUPPORTED (-14): controlled fault reset requires negotiated Product API v1.11 and feature bit 12; no controller request was sent.</source>
+        <translation>UNSUPPORTED (-14)：受控故障复位需要协商使用 Product API v1.11 且具备功能位 12；未向控制器发送请求。</translation>
+    </message>
+    <message>
+        <source>Fault reset is not supported by this controller connection.</source>
+        <translation>当前控制器连接不支持故障复位。</translation>
+    </message>
+    <message>
+        <source>Fault reset outcome could not be verified.</source>
+        <translation>无法验证故障复位结果。</translation>
+    </message>
+</context>
 </TS>

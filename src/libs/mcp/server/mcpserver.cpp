@@ -218,7 +218,7 @@ public:
 
     Result<void> validateOrigin(const QHttpServerRequest &req)
     {
-        if (!enableCors || !req.headers().contains("Origin"))
+        if (!req.headers().contains("Origin"))
             return {};
 
         const auto originHeader = req.headers().value("Origin");
@@ -230,10 +230,14 @@ public:
             return ResultError(
                 QString("Invalid Origin header: %1").arg(QString::fromUtf8(originHeader)));
 
-        // Check origin is localhost.
+        // Streamable HTTP servers that bind to loopback must still reject a
+        // browser request whose Origin names another host. CORS response
+        // headers do not widen this security boundary.
         QHostAddress originHost(origin.host());
-        if (origin.host() != "localhost" && !originHost.isLoopback() && !enableCors)
+        if (origin.host().compare("localhost", Qt::CaseInsensitive) != 0
+            && !originHost.isLoopback()) {
             return ResultError(QString("Origin not allowed: %1").arg(origin.toString()));
+        }
 
         return {};
     }
@@ -689,9 +693,15 @@ public:
         // Should never happen — validated upstream in onRequest() via validateSessionInitialized().
         QTC_ASSERT(sessionInfo, return);
         Schema::ClientCapabilities clientCapabilities = sessionInfo->capabilities;
+        const Schema::Implementation clientInfo = sessionInfo->info;
 
         ToolInterface toolInterface(
-            shared_from_this(), clientCapabilities, request, sessionId, responder);
+            shared_from_this(),
+            clientCapabilities,
+            clientInfo,
+            request,
+            sessionId,
+            responder);
 
         m_pendingToolInterfaces.insert(SessionAndRequestId{sessionId, id}, toolInterface.d);
 
@@ -1530,7 +1540,7 @@ Server::Server(Schema::Implementation serverInfo)
                 qCWarning(mcpServerLog) << "Rejected request with invalid Origin header:"
                                         << req.headers().value("Origin") << originValid.error();
                 responder.write(
-                    QString("Invalid origin header: %s").arg(originValid.error()).toUtf8(),
+                    QString("Invalid origin header: %1").arg(originValid.error()).toUtf8(),
                     errorHeaders,
                     QHttpServerResponse::StatusCode::BadRequest);
                 return;
@@ -1778,6 +1788,7 @@ void Server::setCorsEnabled(bool enabled)
 struct ToolInterfacePrivate
 {
     Schema::ClientCapabilities _clientCapabilities;
+    Schema::Implementation _clientInfo;
     std::weak_ptr<ServerPrivate> _server;
     Schema::CallToolRequest _initialRequest;
     QString _sessionId;
@@ -1922,10 +1933,12 @@ void ServerPrivate::deleteSession(const QString &sessionId)
 ToolInterface::ToolInterface(
     std::weak_ptr<ServerPrivate> serverPrivate,
     const Schema::ClientCapabilities &clientCaps,
+    const Schema::Implementation &clientInfo,
     const Schema::CallToolRequest &request,
     const QString &sessionId,
     const Responder &responder)
-    : d(std::make_shared<ToolInterfacePrivate>(clientCaps, serverPrivate, request, sessionId, responder))
+    : d(std::make_shared<ToolInterfacePrivate>(
+          clientCaps, clientInfo, serverPrivate, request, sessionId, responder))
 {}
 
 ToolInterface::~ToolInterface() {}
@@ -1933,6 +1946,16 @@ ToolInterface::~ToolInterface() {}
 const Schema::ClientCapabilities &ToolInterface::clientCapabilities() const
 {
     return d->_clientCapabilities;
+}
+
+QString ToolInterface::sessionId() const
+{
+    return d->_sessionId;
+}
+
+const Schema::Implementation &ToolInterface::clientInfo() const
+{
+    return d->_clientInfo;
 }
 
 void ToolInterface::elicit(

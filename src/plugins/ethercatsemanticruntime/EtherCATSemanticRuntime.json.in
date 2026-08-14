@@ -1,0 +1,14 @@
+{
+    "Id" : "ethercatsemanticruntime",
+    "DisplayName" : "EtherCAT Semantic Runtime",
+    "Name" : "EtherCATSemanticRuntime",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "embedlabs",
+    "Vendor" : "Embed Labs",
+    "Copyright" : "(C) 2026 Embed Labs",
+    "License" : [ "Commercial Usage" ],
+    "Category" : "EtherCAT",
+    "Description" : "Fail-closed semantic runtime context and operation service.",
+    ${IDE_PLUGIN_DEPENDENCIES}
+}

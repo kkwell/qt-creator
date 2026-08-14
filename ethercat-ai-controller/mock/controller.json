@@ -1,0 +1,142 @@
+{
+  "apiVersion": "controller-tools/v1",
+  "kind": "MockController",
+  "metadata": {
+    "id": "mock.controller.zynq-001",
+    "version": "1.0.0",
+    "createdAt": "2026-07-25T00:00:00Z"
+  },
+  "spec": {
+    "controllerId": "mock.controller.zynq-001",
+    "bootId": "mock-boot-20260725-001",
+    "mock": true,
+    "readOnly": true,
+    "productApi": {
+      "protocolMajor": 1,
+      "protocolMinor": 10,
+      "transport": "in-memory-mock",
+      "connected": false
+    },
+    "capabilitySha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "capabilities": {
+      "maximumSlaves": 64,
+      "minimumCycleUs": 125,
+      "maximumCyclicFrames": 8,
+      "maximumProcessInputBytes": 512,
+      "maximumProcessOutputBytes": 512,
+      "supportedTimingModes": [
+        "free-run",
+        "distributed-clocks"
+      ],
+      "coe": true,
+      "cia402": true,
+      "runtimeProgram": false,
+      "ecpkgBuild": false,
+      "ecpkgDeploy": false,
+      "adapterVerification": false
+    },
+    "state": {
+      "serviceState": "OP_SAFE",
+      "ready": true,
+      "busOperational": true,
+      "applicationActive": false,
+      "safeOutput": true,
+      "fault": false,
+      "expectedWorkingCounter": 6,
+      "actualWorkingCounter": 6,
+      "cycleCount": 424242,
+      "currentFaults": 0,
+      "latchedFaults": 0,
+      "leaseOwnerSessionId": 0
+    },
+    "topology": {
+      "source": "mock",
+      "topologySha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "respondingCount": 3,
+      "slaves": [
+        {
+          "position": 0,
+          "stationAddress": 4097,
+          "alState": "OP",
+          "identity": {
+            "vendorId": 286331153,
+            "productCode": 4097,
+            "revision": 1,
+            "serial": 1001
+          },
+          "esiSha256": "2f9adb1d95f34114fdf6018e849984e62f9846e491d5f5ffed85d8d6928ba940",
+          "deviceModelId": "mock.digital-io.8x8",
+          "adapterId": "mock.adapter.digital-io.8x8"
+        },
+        {
+          "position": 1,
+          "stationAddress": 4098,
+          "alState": "OP",
+          "identity": {
+            "vendorId": 286331153,
+            "productCode": 4098,
+            "revision": 1,
+            "serial": 1002
+          },
+          "esiSha256": "7c0ba0e8736dafbaf1b9ab00bac2920b3b5a4e1c660b62e81a4cec9a836ff106",
+          "deviceModelId": "mock.analog-io.4x4",
+          "adapterId": "mock.adapter.analog-io.4x4"
+        },
+        {
+          "position": 2,
+          "stationAddress": 4099,
+          "alState": "OP",
+          "identity": {
+            "vendorId": 286331153,
+            "productCode": 8193,
+            "revision": 1,
+            "serial": 1003
+          },
+          "esiSha256": "4bf158b257ce44b357b792cc9b5c3a001405e65d936110473ee9cfe3f433d936",
+          "deviceModelId": "mock.cia402-servo.axis1",
+          "adapterId": "mock.adapter.cia402-servo.axis1"
+        }
+      ]
+    },
+    "diagnostics": {
+      "severity": "none",
+      "alarms": [],
+      "links": [
+        {
+          "port": 0,
+          "up": true,
+          "rxErrors": 0,
+          "lostLinks": 0
+        }
+      ],
+      "note": "Static mock evidence; not sampled from a controller."
+    },
+    "operationPolicy": {
+      "allowed": [
+        "controller.list",
+        "controller.get-capabilities",
+        "controller.get-state",
+        "controller.get-topology",
+        "controller.get-device",
+        "controller.get-diagnostics",
+        "adapter.list",
+        "artifact.validate",
+        "gateway.get-protocol"
+      ],
+      "forbidden": [
+        "lease",
+        "scan",
+        "configure",
+        "sdo-write",
+        "pdo-write",
+        "deploy",
+        "activate",
+        "start",
+        "motion",
+        "shell",
+        "raw-memory",
+        "raw-register"
+      ]
+    }
+  }
+}

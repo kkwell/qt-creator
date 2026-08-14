@@ -1,0 +1,14 @@
+{
+    "Id" : "ethercatproductapi",
+    "DisplayName" : "EtherCAT Product API",
+    "Name" : "EtherCATProductApi",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "embedlabs",
+    "Vendor" : "Embed Labs",
+    "Copyright" : "(C) 2026 Embed Labs",
+    "License" : [ "Commercial Usage" ],
+    "Category" : "EtherCAT",
+    "Description" : "Embed Labs Product API v1.15 controller adapter with bounded legacy compatibility.",
+    ${IDE_PLUGIN_DEPENDENCIES}
+}

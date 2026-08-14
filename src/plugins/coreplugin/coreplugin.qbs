@@ -103,6 +103,8 @@ QtcPlugin {
             "ioutputpane.h",
             "iversioncontrol.cpp",
             "iversioncontrol.h",
+            "ieasyboardpage.cpp",
+            "ieasyboardpage.h",
             "iwelcomepage.cpp",
             "iwelcomepage.h",
             "iwizardfactory.cpp",

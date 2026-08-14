@@ -1,0 +1,2085 @@
+{
+  "schemaVersion": "embed-labs.device-adapter/v3",
+  "id": "org.embedlabs.adapter.solidot.xb6-ec0002.rev1",
+  "version": "0.3.1",
+  "displayName": "Solidot XB6-EC0002 revision 1",
+  "description": "API-038 upper-layer adapter for the exact XB6 rev1 DO16 profile and coupler status.",
+  "qualification": "qualified",
+  "matchPriority": 1100,
+  "match": {
+    "vendorId": 8930371,
+    "productCode": 182,
+    "minimumRevision": 1,
+    "maximumRevision": 1,
+    "exactEsiSha256": "5b0bfbfffdfde1fd293589deb4a1c59f974aa79dcd9206ac0a695ab00f395bf7"
+  },
+  "controllerAdapterTarget": {
+    "adapterId": "solidot.xb6_ec0002_rev1_do16",
+    "adapterVersion": "1.3.0",
+    "adapterSha256": "1b33847b728585760471384cc6dec4273c7c1fb739e001a0b848229b935e3c42",
+    "esiSha256": "5b0bfbfffdfde1fd293589deb4a1c59f974aa79dcd9206ac0a695ab00f395bf7"
+  },
+  "capabilities": [
+    "org.embedlabs.ethercat.coe",
+    "org.embedlabs.ethercat.diagnostics",
+    "org.embedlabs.ethercat.modular-device-profile",
+    "org.embedlabs.io.digital-output"
+  ],
+  "source": {
+    "id": "org.embedlabs.esi.solidot.xb6-v3.22",
+    "version": "3.22",
+    "location": "resource://ethercat/esi/EcatTerminal-XB6_V3.22_ENUM.xml",
+    "sha256": "5b0bfbfffdfde1fd293589deb4a1c59f974aa79dcd9206ac0a695ab00f395bf7"
+  },
+  "evidenceSha256": "",
+  "signatureVerified": false,
+  "realHardwareAllowed": false,
+  "signals": [
+    {
+      "id": "org.embedlabs.solidot.xb6.coupler.control",
+      "displayName": "control",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.ethercat.diagnostics"
+      ],
+      "direction": "output",
+      "access": "read-only",
+      "exposure": "internal",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5887,
+          "objectIndex": 61952,
+          "subIndex": 1,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "65535",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.coupler.state",
+      "displayName": "state",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.ethercat.diagnostics"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6911,
+          "objectIndex": 61696,
+          "subIndex": 1,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "65535",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0",
+      "displayName": "0",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 1,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.1",
+      "displayName": "1",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 2,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.10",
+      "displayName": "10",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 11,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.11",
+      "displayName": "11",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 12,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.12",
+      "displayName": "12",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 13,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.13",
+      "displayName": "13",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 14,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.14",
+      "displayName": "14",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 15,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15",
+      "displayName": "15",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 16,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.2",
+      "displayName": "2",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 3,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.3",
+      "displayName": "3",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 4,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.4",
+      "displayName": "4",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 5,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.5",
+      "displayName": "5",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 6,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.6",
+      "displayName": "6",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 7,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.7",
+      "displayName": "7",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 8,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.8",
+      "displayName": "8",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 9,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.9",
+      "displayName": "9",
+      "description": "Exact API-038 semantic signal bound to the audited ESI PDO layout.",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 10,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    }
+  ],
+  "processDataProfiles": [
+    {
+      "id": "org.embedlabs.solidot.xb6.api038-do16",
+      "signedPdoProfileId": "do16",
+      "signedDcProfileId": null,
+      "rxPdos": [
+        5632,
+        5887
+      ],
+      "txPdos": [
+        6911
+      ],
+      "requiredSignals": [
+        "org.embedlabs.solidot.xb6.coupler.control",
+        "org.embedlabs.solidot.xb6.coupler.state",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.1",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.10",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.11",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.12",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.13",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.14",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.2",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.3",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.4",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.5",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.6",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.7",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.8",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.9"
+      ]
+    }
+  ],
+  "moduleProfiles": [],
+  "controlActions": [
+    {
+      "id": "org.embedlabs.solidot.xb6.action.clear-digital-outputs",
+      "displayName": "clear digital outputs",
+      "description": "API-038 signed semantic action definition.",
+      "enabled": true,
+      "qualification": "qualified",
+      "disabledReason": null,
+      "requiresDc": false,
+      "expectedSignedDefinitionSha256": "4e6e1ac0ca79032980f5aab89d8eb7f14905123145b87987c58bdc1a908b4b21",
+      "signedPdoProfileIds": [
+        "do16"
+      ],
+      "failureDisposition": "hold-operational-fault",
+      "requiredSignals": [
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.1",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.10",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.11",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.12",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.13",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.14",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.2",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.3",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.4",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.5",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.6",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.7",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.8",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.9"
+      ],
+      "optionalSignals": [],
+      "parameters": [],
+      "consistencyGroups": [
+        {
+          "id": "manual_do16",
+          "members": [
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.1",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.10",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.11",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.12",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.13",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.14",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.2",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.3",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.4",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.5",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.6",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.7",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.8",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.9"
+          ],
+          "recovery": "hold-safe",
+          "maxTtlCycles": 1000
+        }
+      ],
+      "steps": [
+        {
+          "kind": "write-group",
+          "consistencyGroup": "manual_do16",
+          "assignments": [
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.1",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.10",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.11",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.12",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.13",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.14",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.2",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.3",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.4",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.5",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.6",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.7",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.8",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.9",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.action.set-digital-outputs",
+      "displayName": "set digital outputs",
+      "description": "API-038 signed semantic action definition.",
+      "enabled": true,
+      "qualification": "qualified",
+      "disabledReason": null,
+      "requiresDc": false,
+      "expectedSignedDefinitionSha256": "d7eae9ade36e0d28fde08b36511966072a63a99a5ebb089f50fdfb3d799c72bd",
+      "signedPdoProfileIds": [
+        "do16"
+      ],
+      "failureDisposition": "hold-operational-fault",
+      "requiredSignals": [
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.1",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.10",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.11",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.12",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.13",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.14",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.2",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.3",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.4",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.5",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.6",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.7",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.8",
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.9"
+      ],
+      "optionalSignals": [],
+      "parameters": [
+        {
+          "id": "do0",
+          "displayName": "do0",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do1",
+          "displayName": "do1",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do10",
+          "displayName": "do10",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do11",
+          "displayName": "do11",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do12",
+          "displayName": "do12",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do13",
+          "displayName": "do13",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do14",
+          "displayName": "do14",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do15",
+          "displayName": "do15",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do2",
+          "displayName": "do2",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do3",
+          "displayName": "do3",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do4",
+          "displayName": "do4",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do5",
+          "displayName": "do5",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do6",
+          "displayName": "do6",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do7",
+          "displayName": "do7",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do8",
+          "displayName": "do8",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        },
+        {
+          "id": "do9",
+          "displayName": "do9",
+          "description": "API-038 signed action parameter.",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        }
+      ],
+      "consistencyGroups": [
+        {
+          "id": "manual_do16",
+          "members": [
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.1",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.10",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.11",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.12",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.13",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.14",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.2",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.3",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.4",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.5",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.6",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.7",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.8",
+            "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.9"
+          ],
+          "recovery": "hold-safe",
+          "maxTtlCycles": 1000
+        }
+      ],
+      "steps": [
+        {
+          "kind": "write-group",
+          "consistencyGroup": "manual_do16",
+          "assignments": [
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do0"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.1",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do1"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.10",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do10"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.11",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do11"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.12",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do12"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.13",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do13"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.14",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do14"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do15"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.2",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do2"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.3",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do3"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.4",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do4"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.5",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do5"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.6",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do6"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.7",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do7"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.8",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do8"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.9",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "do9"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,364 @@
+{
+  "apiVersion": "controller.embed-labs.dev/v1",
+  "kind": "NormalizedDeviceModel",
+  "metadata": {
+    "id": "mock.digital-io.8x8",
+    "version": "1.0.0",
+    "createdAt": "2026-07-25T00:00:00Z",
+    "description": "Mock eight-channel digital output and input terminal"
+  },
+  "spec": {
+    "identity": {
+      "vendorId": 286331153,
+      "productCode": 4097,
+      "revision": 1
+    },
+    "esiSource": {
+      "uri": "mock://esi/mock-digital-io.xml",
+      "sha256": "2f9adb1d95f34114fdf6018e849984e62f9846e491d5f5ffed85d8d6928ba940",
+      "importedAt": "2026-07-25T00:00:00Z",
+      "complete": true,
+      "warnings": []
+    },
+    "mailbox": {
+      "supported": true,
+      "protocols": [
+        "CoE"
+      ],
+      "receiveOffset": 4096,
+      "receiveSize": 128,
+      "sendOffset": 4224,
+      "sendSize": 128
+    },
+    "syncManagers": [
+      {
+        "index": 0,
+        "direction": "mailbox-out",
+        "startAddress": 4096,
+        "sizeBytes": 128,
+        "controlByte": 38,
+        "enabled": true
+      },
+      {
+        "index": 1,
+        "direction": "mailbox-in",
+        "startAddress": 4224,
+        "sizeBytes": 128,
+        "controlByte": 34,
+        "enabled": true
+      },
+      {
+        "index": 2,
+        "direction": "master-to-slave",
+        "startAddress": 4352,
+        "sizeBytes": 1,
+        "controlByte": 36,
+        "enabled": true
+      },
+      {
+        "index": 3,
+        "direction": "slave-to-master",
+        "startAddress": 4608,
+        "sizeBytes": 1,
+        "controlByte": 32,
+        "enabled": true
+      }
+    ],
+    "fmmus": [
+      {
+        "index": 0,
+        "usage": "outputs",
+        "required": true
+      },
+      {
+        "index": 1,
+        "usage": "inputs",
+        "required": true
+      }
+    ],
+    "rxPdos": [
+      {
+        "index": 5632,
+        "name": "Digital outputs",
+        "syncManager": 2,
+        "fixed": true,
+        "mandatory": true,
+        "entries": [
+          {
+            "index": 28672,
+            "subIndex": 1,
+            "name": "Output 1",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-output-1"
+          },
+          {
+            "index": 28672,
+            "subIndex": 2,
+            "name": "Output 2",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-output-2"
+          },
+          {
+            "index": 28672,
+            "subIndex": 3,
+            "name": "Output 3",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-output-3"
+          },
+          {
+            "index": 28672,
+            "subIndex": 4,
+            "name": "Output 4",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-output-4"
+          },
+          {
+            "index": 28672,
+            "subIndex": 5,
+            "name": "Output 5",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-output-5"
+          },
+          {
+            "index": 28672,
+            "subIndex": 6,
+            "name": "Output 6",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-output-6"
+          },
+          {
+            "index": 28672,
+            "subIndex": 7,
+            "name": "Output 7",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-output-7"
+          },
+          {
+            "index": 28672,
+            "subIndex": 8,
+            "name": "Output 8",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-output-8"
+          }
+        ]
+      }
+    ],
+    "txPdos": [
+      {
+        "index": 6656,
+        "name": "Digital inputs",
+        "syncManager": 3,
+        "fixed": true,
+        "mandatory": true,
+        "entries": [
+          {
+            "index": 24576,
+            "subIndex": 1,
+            "name": "Input 1",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-input-1"
+          },
+          {
+            "index": 24576,
+            "subIndex": 2,
+            "name": "Input 2",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-input-2"
+          },
+          {
+            "index": 24576,
+            "subIndex": 3,
+            "name": "Input 3",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-input-3"
+          },
+          {
+            "index": 24576,
+            "subIndex": 4,
+            "name": "Input 4",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-input-4"
+          },
+          {
+            "index": 24576,
+            "subIndex": 5,
+            "name": "Input 5",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-input-5"
+          },
+          {
+            "index": 24576,
+            "subIndex": 6,
+            "name": "Input 6",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-input-6"
+          },
+          {
+            "index": 24576,
+            "subIndex": 7,
+            "name": "Input 7",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-input-7"
+          },
+          {
+            "index": 24576,
+            "subIndex": 8,
+            "name": "Input 8",
+            "bitLength": 1,
+            "dataType": "boolean",
+            "mapping": "fixed",
+            "semantic": "digital-input-8"
+          }
+        ]
+      }
+    ],
+    "objectDictionary": [
+      {
+        "index": 28672,
+        "subIndex": 1,
+        "name": "Output 1",
+        "dataType": "boolean",
+        "access": "rw",
+        "pdoMappable": true,
+        "semantic": "digital-output-1"
+      },
+      {
+        "index": 24576,
+        "subIndex": 1,
+        "name": "Input 1",
+        "dataType": "boolean",
+        "access": "ro",
+        "pdoMappable": true,
+        "semantic": "digital-input-1"
+      }
+    ],
+    "distributedClocks": {
+      "supported": false,
+      "referenceClockCapable": false,
+      "sync0": {
+        "supported": false,
+        "minimumCycleNs": 0,
+        "maximumCycleNs": 0,
+        "minimumShiftNs": 0,
+        "maximumShiftNs": 0
+      },
+      "sync1": {
+        "supported": false,
+        "minimumCycleNs": 0,
+        "maximumCycleNs": 0,
+        "minimumShiftNs": 0,
+        "maximumShiftNs": 0
+      },
+      "modes": []
+    },
+    "cycle": {
+      "minimumUs": 125,
+      "maximumUs": 100000,
+      "supportedUs": [
+        125,
+        250,
+        500,
+        1000,
+        2000,
+        4000
+      ]
+    },
+    "watchdog": {
+      "supported": true,
+      "minimumMs": 2,
+      "maximumMs": 10000,
+      "defaultMs": 100,
+      "safeState": "zero-outputs"
+    },
+    "startupSdos": [],
+    "cia402": {
+      "supported": false,
+      "axes": 0,
+      "modes": [],
+      "requiredObjects": []
+    },
+    "processImage": {
+      "inputBytes": 1,
+      "outputBytes": 1,
+      "variables": [
+        {
+          "id": "digital-output-1",
+          "direction": "output",
+          "byteOffset": 0,
+          "bitOffset": 0,
+          "bitLength": 1,
+          "dataType": "boolean",
+          "object": {
+            "index": 28672,
+            "subIndex": 1
+          }
+        },
+        {
+          "id": "digital-input-1",
+          "direction": "input",
+          "byteOffset": 0,
+          "bitOffset": 0,
+          "bitLength": 1,
+          "dataType": "boolean",
+          "object": {
+            "index": 24576,
+            "subIndex": 1
+          }
+        }
+      ]
+    },
+    "safeOutputs": [
+      {
+        "variable": "digital-output-1",
+        "value": false,
+        "reason": "Unknown or stopped tasks de-energize the mock output."
+      }
+    ],
+    "privateInitialization": {
+      "status": "not-required",
+      "steps": [],
+      "missingInformation": []
+    },
+    "diagnostics": {
+      "rules": [
+        {
+          "code": "al-status-error",
+          "source": "al-status",
+          "severity": "error",
+          "recovery": "Keep outputs at zero and report the raw AL status."
+        }
+      ],
+      "unknownCodePolicy": "report-raw-and-stop-if-severe"
+    }
+  }
+}

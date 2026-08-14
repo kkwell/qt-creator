@@ -1,0 +1,1448 @@
+{
+  "$schema": "docs/schemas/ethercat-feature-locator-v1.schema.json",
+  "format": "embed-labs-ethercat-feature-locator-v1",
+  "formatVersion": 1,
+  "areas": [
+    {"id": "architecture", "titleZh": "架构与公共合同"},
+    {"id": "project", "titleZh": "工程模型"},
+    {"id": "devices", "titleZh": "设备、ESI 与 Adapter"},
+    {"id": "online", "titleZh": "真实控制器在线功能"},
+    {"id": "compiler", "titleZh": "编译与准备"},
+    {"id": "runtime", "titleZh": "签名运行时与控制"},
+    {"id": "ui", "titleZh": "Workbench 界面"},
+    {"id": "mock", "titleZh": "Mock 工具"},
+    {"id": "automation", "titleZh": "自动化网关"}
+  ],
+  "components": [
+    {
+      "id": "ethercat-data",
+      "target": "EtherCATData",
+      "directory": "src/libs/ethercatdata",
+      "cmake": "src/libs/ethercatdata/CMakeLists.txt",
+      "qbs": "src/libs/ethercatdata/ethercatdata.qbs",
+      "dependsOn": [],
+      "responsibilityZh": "跨插件共享的不可变值类型、枚举、稳定标识和数据合同。"
+    },
+    {
+      "id": "ethercat-core",
+      "target": "EtherCATCore",
+      "directory": "src/plugins/ethercatcore",
+      "cmake": "src/plugins/ethercatcore/CMakeLists.txt",
+      "qbs": "src/plugins/ethercatcore/ethercatcore.qbs",
+      "metadata": "src/plugins/ethercatcore/EtherCATCore.json.in",
+      "dependsOn": ["ethercat-data"],
+      "responsibilityZh": "Provider 注册、公共服务接口、状态与选择等扩展边界。"
+    },
+    {
+      "id": "ethercat-project",
+      "target": "EtherCATProject",
+      "directory": "src/plugins/ethercatproject",
+      "cmake": "src/plugins/ethercatproject/CMakeLists.txt",
+      "qbs": "src/plugins/ethercatproject/ethercatproject.qbs",
+      "metadata": "src/plugins/ethercatproject/EtherCATProject.json.in",
+      "dependsOn": ["ethercat-data", "ethercat-core"],
+      "responsibilityZh": "工程格式、迁移、持久化、Undo/Redo 和工程变更服务。"
+    },
+    {
+      "id": "ethercat-devices",
+      "target": "EtherCATDevices",
+      "directory": "src/plugins/ethercatdevices",
+      "cmake": "src/plugins/ethercatdevices/CMakeLists.txt",
+      "qbs": "src/plugins/ethercatdevices/ethercatdevices.qbs",
+      "metadata": "src/plugins/ethercatdevices/EtherCATDevices.json.in",
+      "dependsOn": ["ethercat-data", "ethercat-core"],
+      "responsibilityZh": "ESI XML 解析、固定设备库、导入和设备描述索引。"
+    },
+    {
+      "id": "ethercat-device-adapters",
+      "target": "EtherCATDeviceAdapters",
+      "directory": "src/plugins/ethercatdeviceadapters",
+      "cmake": "src/plugins/ethercatdeviceadapters/CMakeLists.txt",
+      "qbs": "src/plugins/ethercatdeviceadapters/ethercatdeviceadapters.qbs",
+      "metadata": "src/plugins/ethercatdeviceadapters/EtherCATDeviceAdapters.json.in",
+      "dependsOn": ["ethercat-data", "ethercat-core"],
+      "responsibilityZh": "厂家无关 Adapter 目录、精确型号匹配、授权和信任校验。"
+    },
+    {
+      "id": "ethercat-product-api",
+      "target": "EtherCATProductApi",
+      "directory": "src/plugins/ethercatproductapi",
+      "cmake": "src/plugins/ethercatproductapi/CMakeLists.txt",
+      "qbs": "src/plugins/ethercatproductapi/ethercatproductapi.qbs",
+      "metadata": "src/plugins/ethercatproductapi/EtherCATProductApi.json.in",
+      "dependsOn": ["ethercat-data", "ethercat-core"],
+      "responsibilityZh": "Embed Labs 控制器三通道 Product API、会话、协议和在线 Provider。"
+    },
+    {
+      "id": "ethercat-project-compiler",
+      "target": "EtherCATProjectCompiler",
+      "directory": "src/plugins/ethercatprojectcompiler",
+      "cmake": "src/plugins/ethercatprojectcompiler/CMakeLists.txt",
+      "qbs": "src/plugins/ethercatprojectcompiler/ethercatprojectcompiler.qbs",
+      "metadata": "src/plugins/ethercatprojectcompiler/EtherCATProjectCompiler.json.in",
+      "dependsOn": ["ethercat-data", "ethercat-core"],
+      "responsibilityZh": "工程快照投影、外部编译器调用、幂等账本和准备事务。"
+    },
+    {
+      "id": "ethercat-semantic-runtime",
+      "target": "EtherCATSemanticRuntime",
+      "directory": "src/plugins/ethercatsemanticruntime",
+      "cmake": "src/plugins/ethercatsemanticruntime/CMakeLists.txt",
+      "qbs": "src/plugins/ethercatsemanticruntime/ethercatsemanticruntime.qbs",
+      "metadata": "src/plugins/ethercatsemanticruntime/EtherCATSemanticRuntime.json.in",
+      "dependsOn": ["ethercat-data", "ethercat-core", "ethercat-project", "ethercat-project-compiler"],
+      "responsibilityZh": "签名 ECPKG 证据、语义绑定、动作执行和激活事务。"
+    },
+    {
+      "id": "ethercat-workbench",
+      "target": "EtherCATWorkbench",
+      "directory": "src/plugins/ethercatworkbench",
+      "cmake": "src/plugins/ethercatworkbench/CMakeLists.txt",
+      "qbs": "src/plugins/ethercatworkbench/ethercatworkbench.qbs",
+      "metadata": "src/plugins/ethercatworkbench/EtherCATWorkbench.json.in",
+      "dependsOn": ["ethercat-data", "ethercat-core", "ethercat-devices", "ethercat-project", "ethercat-project-compiler", "ethercat-semantic-runtime"],
+      "responsibilityZh": "统一工程树、命令、属性页、在线状态和应用程序输出。"
+    },
+    {
+      "id": "ethercat-scan",
+      "target": "EtherCATScan",
+      "directory": "src/plugins/ethercatscan",
+      "cmake": "src/plugins/ethercatscan/CMakeLists.txt",
+      "qbs": "src/plugins/ethercatscan/ethercatscan.qbs",
+      "metadata": "src/plugins/ethercatscan/EtherCATScan.json.in",
+      "dependsOn": ["ethercat-data", "ethercat-core", "ethercat-devices", "ethercat-project", "ethercat-workbench"],
+      "responsibilityZh": "仅 Mock 的扫描、拓扑比较和接受到离线工程流程。"
+    },
+    {
+      "id": "ethercat-diagnostics",
+      "target": "EtherCATDiagnostics",
+      "directory": "src/plugins/ethercatdiagnostics",
+      "cmake": "src/plugins/ethercatdiagnostics/CMakeLists.txt",
+      "qbs": "src/plugins/ethercatdiagnostics/ethercatdiagnostics.qbs",
+      "metadata": "src/plugins/ethercatdiagnostics/EtherCATDiagnostics.json.in",
+      "dependsOn": ["ethercat-data", "ethercat-core", "ethercat-project", "ethercat-workbench"],
+      "responsibilityZh": "仅 Mock 的诊断采样、告警生命周期和诊断属性页。"
+    },
+    {
+      "id": "ethercat-automation-gateway",
+      "target": "EtherCATAutomationGateway",
+      "directory": "src/plugins/ethercatautomationgateway",
+      "cmake": "src/plugins/ethercatautomationgateway/CMakeLists.txt",
+      "qbs": "src/plugins/ethercatautomationgateway/ethercatautomationgateway.qbs",
+      "metadata": "src/plugins/ethercatautomationgateway/EtherCATAutomationGateway.json.in",
+      "dependsOn": ["ethercat-data", "ethercat-core", "ethercat-semantic-runtime", "ethercat-workbench"],
+      "responsibilityZh": "默认关闭且仅回环绑定的 MCP/REST 自动化入口。"
+    }
+  ],
+  "features": [
+    {
+      "id": "ethercat.data.domain-contracts",
+      "area": "architecture",
+      "titleZh": "跨插件数据合同",
+      "summaryZh": "定义工程、控制器、资源、输出事务和语义运行时共享值类型。",
+      "owner": "ethercat-data",
+      "runtimeBoundary": "contract-only",
+      "evidenceBoundary": ["unit"],
+      "keywords": ["公共数据", "值类型", "NodeId", "ControllerConnection", "资源"],
+      "implementation": [
+        {"path": "src/libs/ethercatdata/offlineconfiguration.cpp", "symbols": ["validateProcessDataConfiguration"], "roleZh": "离线配置值合同校验"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/controllerconnection.h", "symbols": ["ControllerConnectionSnapshot", "ControllerControlRequest"], "roleZh": "控制器在线共享合同"},
+        {"path": "src/libs/ethercatdata/projectsnapshot.h", "symbols": ["ProjectSnapshot"], "roleZh": "工程快照合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testProjectSnapshotValueSemantics", "testRuntimeResourceValueSemantics"], "kind": "unit"}
+      ],
+      "docs": ["docs/ethercat-core-api.md"],
+      "dependsOn": [],
+      "notesZh": ["跨插件只传递此库或 EtherCATCore 的公开合同，不包含其他插件的私有头文件。"]
+    },
+    {
+      "id": "ethercat.core.provider-registry",
+      "area": "architecture",
+      "titleZh": "Provider 注册与唯一性",
+      "summaryZh": "发现公共 Provider、拒绝重复稳定 ID，并以有界诊断报告冲突。",
+      "owner": "ethercat-core",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit", "offscreen-ui"],
+      "keywords": ["Provider", "注册", "重复 ID", "插件依赖", "内存上限"],
+      "implementation": [
+        {"path": "src/plugins/ethercatcore/providerregistry.cpp", "symbols": ["ProviderRegistry::handleObjectAdded", "ProviderRegistry::recordDuplicateProvider"], "roleZh": "对象池发现、唯一性和有界诊断"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT Provider", "ProviderStartupDiagnostic"], "roleZh": "公共 Provider 基类和启动诊断"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testProviderRegistryTracksObjectPool"], "kind": "unit"},
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testProviderStartupDiagnosticsPresentation"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.data.domain-contracts"],
+      "notesZh": ["同一职责只允许一个稳定 Provider ID；冲突对象不会成为备用实现。"]
+    },
+    {
+      "id": "ethercat.core.topology-service",
+      "area": "architecture",
+      "titleZh": "来源隔离的统一拓扑服务",
+      "summaryZh": "按精确来源、Provider 和工程 Scope 即时投影真实或 Mock 拓扑，并派生可比较的 generation 与 freshness。",
+      "owner": "ethercat-core",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit"],
+      "keywords": ["TopologyService", "拓扑", "Real", "Mock", "generation", "freshness"],
+      "implementation": [
+        {"path": "src/plugins/ethercatcore/topologyservice.cpp", "symbols": ["TopologyService::topology", "TopologySnapshot::generation", "TopologyService::handleProviderAboutToBeRemoved"], "roleZh": "精确来源查询、代际派生和失效通知"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/topologyservice.h", "symbols": ["class ETHERCATCORE_EXPORT TopologyService", "TopologySelection", "TopologyGeneration", "TopologyLookupResult", "hasFreshProviderEvidence"], "roleZh": "统一只读拓扑选择、来源、代际和 Provider 质量合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testTopologyServiceKeepsRealAndMockEvidenceSeparate"], "kind": "unit"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-automation-gateway.md"],
+      "dependsOn": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry"],
+      "notesZh": ["服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。", "标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。", "Workbench 已按显式 Provider/Profile 消费 Fresh RealController，并按 Core Scan Provider 选择消费 Fresh Mock 证据；ScanWorkflow 按同一选择锁定 Fresh Mock snapshot generation；Gateway 只消费 Workbench 经 TopologyService 生成的 AutomationService 值快照，不持有 Provider 或扫描入口。"]
+    },
+    {
+      "id": "ethercat.core.scan-provider-selection",
+      "area": "architecture",
+      "titleZh": "显式 Mock 扫描 Provider 选择",
+      "summaryZh": "按打开的工程与主站 Scope 保存唯一 Scan Provider ID，并在扫描活跃、Provider 移除和工程结构变化时 fail closed。",
+      "owner": "ethercat-core",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit"],
+      "keywords": ["ScanProviderSelectionService", "Mock", "扫描 Provider", "显式选择", "无自动替补"],
+      "implementation": [
+        {"path": "src/plugins/ethercatcore/scanproviderselectionservice.cpp", "symbols": ["ScanProviderSelectionService::select", "ScanProviderSelectionService::clear", "ScanProviderSelectionService::handleProjectChanged"], "roleZh": "按 Scope 管理显式 Provider ID、活跃扫描门禁和工程生命周期清理"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/scanproviderselectionservice.h", "symbols": ["ScanProviderSelection", "class ETHERCATCORE_EXPORT ScanProviderSelectionService"], "roleZh": "会话级 Mock Scan Provider 选择与可用性通知合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testScanProviderSelectionServiceContract"], "kind": "unit"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry"],
+      "notesZh": ["服务只保存 scope 与稳定 Provider ID，不保存 Provider 指针、ScanResult 或拓扑，也不调用 start、cancel 或 clear。", "没有显式选择时结果为空；已选 Provider 不可用或被移除时保持原 ID，但不得自动切换到其他 Provider。", "这是进程会话事实，不进入 .ecatproject 或签名工程身份；本机偏好恢复必须等待工程打开并重新校验 scope。"]
+    },
+    {
+      "id": "ethercat.core.manual-control-contract",
+      "area": "architecture",
+      "titleZh": "通用手动控制合同",
+      "summaryZh": "验证工程单位换算、手动包络、超时策略和安全边界，不含厂家协议分支。",
+      "owner": "ethercat-core",
+      "runtimeBoundary": "contract-only",
+      "evidenceBoundary": ["unit"],
+      "keywords": ["手动控制", "工程单位", "范围", "TTL", "安全值"],
+      "implementation": [
+        {"path": "src/plugins/ethercatcore/manualcontrolcontract.cpp", "symbols": ["validateManualControlEnvelope"], "roleZh": "通用工程值与手动包络校验"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/manualcontrolcontract.h", "symbols": ["ManualControlContractValidation", "validateManualControlEnvelope"], "roleZh": "手动控制校验公开接口"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testExactEngineeringConversionContract", "testManualControlEnvelopeContract"], "kind": "unit"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.data.domain-contracts"],
+      "notesZh": ["厂家对象、PDO 偏移和 CiA402 步骤应由 Adapter 提供，Core 不得写死。"]
+    },
+    {
+      "id": "ethercat.core.device-parameter-contract",
+      "area": "architecture",
+      "titleZh": "设备参数工程意图合同",
+      "summaryZh": "校验有界设备参数工程意图，并针对精确授权的 Adapter v4 定义复核 ESI、Adapter/Profile、required、类型和工程范围；不执行在线读写。",
+      "owner": "ethercat-core",
+      "runtimeBoundary": "contract-only",
+      "evidenceBoundary": ["unit"],
+      "keywords": ["设备参数", "deviceParameters", "parameterDefinitions", "EngineeringValue", "ASCII", "工程意图", "资格化"],
+      "implementation": [
+        {"path": "src/plugins/ethercatcore/deviceparametercontract.cpp", "symbols": ["validateDeviceParameterConfiguration", "validateConfiguredDeviceParameters"], "roleZh": "通用结构校验与精确 Adapter v4 参数资格校验"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/deviceparameters.h", "symbols": ["DeviceParameterValue", "DeviceParameterConfiguration", "maximumDeviceParametersPerProject"], "roleZh": "有界工程参数值类型和数量上限"},
+        {"path": "src/plugins/ethercatcore/deviceparametercontract.h", "symbols": ["DeviceParameterContractValidation", "validateDeviceParameterConfiguration", "ConfiguredDeviceParameterValidation", "validateConfiguredDeviceParameters"], "roleZh": "跨插件设备参数结构与资格校验合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testDeviceParameterConfigurationContract", "testConfiguredDeviceParameterQualification"], "kind": "unit"}
+      ],
+      "docs": ["docs/ethercat-device-adapters.md", "docs/ethercat-project-format.md", "docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.data.domain-contracts"],
+      "notesZh": ["工程持久化仍只验证通用语法；资格校验必须显式传入精确 ESI、完整 Adapter/Profile 选择、Qualified 以及 signatureVerified/realHardwareAllowed 双重信任结果。", "API-075 已安装独立授权的生产 SV630N v4 Adapter；任意非空参数在 compiler 合同完成投影前仍 fail closed。", "在线扫描实测值属于独立会话证据，不得写入 DeviceParameterConfiguration 或 ProjectSnapshot。"]
+    },
+    {
+      "id": "ethercat.project.model-format",
+      "area": "project",
+      "titleZh": "工程格式与迁移",
+      "summaryZh": "维护当前 v8 工程 JSON、严格结构校验和旧版本迁移，包括每从站 canonical deviceParameters 工程意图。",
+      "owner": "ethercat-project",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit"],
+      "keywords": ["工程文件", "JSON", "v8", "deviceParameters", "迁移", "保存"],
+      "implementation": [
+        {"path": "src/plugins/ethercatproject/ethercatprojectformat.cpp", "symbols": ["parseDeviceParameterConfiguration", "serializeDeviceParameterConfiguration", "CURRENT_FORMAT_VERSION"], "roleZh": "v8 工程读写、设备参数严格形状校验和迁移"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/projectsnapshot.h", "symbols": ["ProjectSnapshot", "OfflineSlaveConfiguration"], "roleZh": "对外工程快照"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatproject/ethercatprojecttests.cpp", "cases": ["testFormatRoundTripAndCorruption", "testDeviceParameterConfigurationPersistenceAndUndo", "testVersionSevenDeviceParameterMigration"], "kind": "unit"}
+      ],
+      "docs": ["docs/ethercat-project-format.md"],
+      "dependsOn": ["ethercat.data.domain-contracts", "ethercat.core.device-parameter-contract"],
+      "notesZh": ["新增持久化字段时必须同时提供迁移、严格解析、往返和损坏输入测试。", "v8 deviceParameters 只保存工程意图；扫描实测值不进入 ProjectSnapshot。"]
+    },
+    {
+      "id": "ethercat.project.mutation",
+      "area": "project",
+      "titleZh": "工程变更、Undo 与 CAS",
+      "summaryZh": "所有界面编辑通过 ProjectService 写入工程；设备参数提交还校验预期 ESI/Adapter value token，并保留 Undo/Redo 与激活比较交换语义。",
+      "owner": "ethercat-project",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit"],
+      "keywords": ["ProjectService", "Undo", "Redo", "设备参数", "expected token", "CAS"],
+      "implementation": [
+        {"path": "src/plugins/ethercatproject/projectserviceimpl.cpp", "symbols": ["ProjectServiceImpl::replaceOfflineSlaves", "ProjectServiceImpl::setDeviceParameterConfiguration", "ProjectServiceImpl::setStartupProject"], "roleZh": "工程变更服务实现"},
+        {"path": "src/plugins/ethercatproject/ethercatprojectdocument.cpp", "symbols": ["EtherCATProjectDocument::setDeviceParameterConfiguration"], "roleZh": "预期 ESI/Adapter 比较、绑定失效和原子 Undo 命令"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT ProjectService", "replaceOfflineSlaves", "setDeviceParameterConfiguration"], "roleZh": "跨插件工程服务和设备参数 expected-token 入口"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatproject/ethercatprojecttests.cpp", "cases": ["testDocumentUndoRedoAndAtomicFailure", "testDeviceParameterConfigurationPersistenceAndUndo", "testRuntimePackageActivationProjectCompareAndSet"], "kind": "unit"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.project.model-format", "ethercat.core.device-parameter-contract", "ethercat.core.provider-registry"],
+      "notesZh": ["页面不得直接修改文档内部对象，也不得维护第二份工程状态。", "设备参数非空时从站必须保持精确 ESI 和完整 Adapter 选择；token 陈旧、ESI 或 Adapter 改变必须拒绝或清空，不能隐式重绑。"]
+    },
+    {
+      "id": "ethercat.devices.esi-repository",
+      "area": "devices",
+      "titleZh": "ESI 设备库与 XML 解析",
+      "summaryZh": "从固定目录加载或导入原始 ESI XML，建立设备、模块、PDO、SDO 和 DC 描述索引。",
+      "owner": "ethercat-devices",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit"],
+      "keywords": ["ESI", "XML", "设备库", "模块", "PDO", "SDO", "DC"],
+      "implementation": [
+        {"path": "src/plugins/ethercatdevices/devicerepository.cpp", "symbols": ["DeviceRepository::importFiles", "DeviceRepository::devices"], "roleZh": "固定目录索引和导入"},
+        {"path": "src/plugins/ethercatdevices/esiparser.cpp", "symbols": ["parseEsiFile"], "roleZh": "严格 XML 解析"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/devicedescription.h", "symbols": ["DeviceDescription", "DeviceIdentity"], "roleZh": "规范化 ESI 描述"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatdevices/ethercatdevicestests.cpp", "cases": ["testParserReadsOperationalData", "testRepositoryImportFilterAndRebuild"], "kind": "unit"}
+      ],
+      "docs": ["docs/ethercat-devices-repository.md"],
+      "dependsOn": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry"],
+      "notesZh": ["ESI 描述设备事实；不能用名称猜测 VendorId、ProductCode 或 Revision。"]
+    },
+    {
+      "id": "ethercat.adapters.catalog-authorization",
+      "area": "devices",
+      "titleZh": "Adapter 目录、型号适配与授权",
+      "summaryZh": "加载 v1/v2/v3/v4 Adapter，按精确设备身份选择，并验证版本隔离的独立授权、参数定义摘要闭包和生产信任链。",
+      "owner": "ethercat-device-adapters",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit", "artifact"],
+      "keywords": ["Adapter", "v4", "parameterDefinitions", "definitionSha256", "厂家", "型号", "XB6", "SV630N", "授权", "签名"],
+      "implementation": [
+        {"path": "src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp", "symbols": ["parseParameterDefinitions", "AdapterPackageRepository::resolveDevice", "AdapterPackageRepository::authorizationStatus"], "roleZh": "v4 定义解析、domain-separated 摘要、精确匹配和授权投影"},
+        {"path": "src/plugins/ethercatdeviceadapters/deviceadapterauthorization_p.cpp", "symbols": ["applyDeviceAdapterAuthorizations"], "roleZh": "授权签名与信任校验"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/deviceadapter.h", "symbols": ["DeviceAdapterManifest", "DeviceParameterDefinition", "DeviceControlAction"], "roleZh": "厂家无关 Adapter、参数定义和动作合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp", "cases": ["testV3SignedActionContract", "testV4ParameterDefinitionContract", "testSignedAdapterAuthorizationV2ParameterClosure", "testExactIdentityAndEsiMatching", "testInstalledProductionAuthorizations", "testSv630nManualActionsRemainDisabled"], "kind": "artifact"}
+      ],
+      "docs": ["docs/ethercat-device-adapters.md"],
+      "dependsOn": ["ethercat.data.domain-contracts"],
+      "notesZh": ["Authorization v1 只允许 v3；v2 只允许 v4，并精确闭包 schemaVersion 与严格排序的参数 ID/definitionSha256。", "API-075 已安装并独立验签 SV630N v4 资产；其参数投影尚未进入 compiler，运动动作仍因型号证据不足而 disabled。", "新增厂家或型号优先只增加 ESI、Adapter、授权和测试，不向 Product API 或 Workbench 添加厂家分支。"]
+    },
+    {
+      "id": "ethercat.product-api.transport-session",
+      "area": "online",
+      "titleZh": "Product API 三通道会话",
+      "summaryZh": "管理 Control、Push、Bulk TCP 通道、握手、心跳、重连和统一快照。",
+      "owner": "ethercat-product-api",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["loopback", "hardware-gated"],
+      "keywords": ["连接", "IP", "Control", "Push", "Bulk", "握手", "心跳", "重连"],
+      "implementation": [
+        {"path": "src/plugins/ethercatproductapi/productapisession.cpp", "symbols": ["ProductApiSession::connectToController", "ProductApiSession::disconnectFromController"], "roleZh": "三通道会话生命周期"},
+        {"path": "src/plugins/ethercatproductapi/productapicodec.cpp", "symbols": ["encodeFrame", "decodeHelloAck"], "roleZh": "ECAP 帧编解码"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/controllerconnection.h", "symbols": ["ControllerConnectionRequest", "ControllerConnectionSnapshot"], "roleZh": "厂商无关连接快照"},
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT ControllerConnectionProvider"], "roleZh": "控制器 Provider 接口"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "cases": ["testThreeChannelInitialSnapshot", "testSessionReconnectAndGeneration", "testChannelConnectionFailureDiagnostics"], "kind": "loopback"}
+      ],
+      "docs": ["docs/ethercat-product-api.md", "docs/ethercat-online-controller.md"],
+      "dependsOn": ["ethercat.core.provider-registry", "ethercat.data.domain-contracts"],
+      "notesZh": ["生产实现可连接真实控制器；普通自动化测试使用本地回环服务，二者不能混称。"]
+    },
+    {
+      "id": "ethercat.product-api.telemetry",
+      "area": "online",
+      "titleZh": "状态、性能与告警遥测",
+      "summaryZh": "解码并发布控制器状态、周期计数、WKC、DC、性能、故障位和告警事件。",
+      "owner": "ethercat-product-api",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["loopback", "hardware-gated"],
+      "keywords": ["周期计数", "WKC", "DC 差值", "性能", "故障原因", "告警", "红灯"],
+      "implementation": [
+        {"path": "src/plugins/ethercatproductapi/productapisession.cpp", "symbols": ["Protocol::decodeControllerState", "Protocol::decodePerformanceSnapshot", "Protocol::MessageType::AlarmRaised"], "roleZh": "Push 遥测处理和统一快照更新"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/controllerconnection.h", "symbols": ["ControllerStateSummary", "ControllerPerformanceSummary", "ControllerAlarmSummary", "ControllerFault"], "roleZh": "厂商无关遥测合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "cases": ["testSemanticControllerState", "testSemanticPerformanceSnapshot", "testControllerErrorAttribution"], "kind": "loopback"}
+      ],
+      "docs": ["docs/ethercat-product-api.md", "docs/ethercat-online-controller.md"],
+      "dependsOn": ["ethercat.product-api.transport-session"],
+      "notesZh": ["真实遥测在 Product API；EtherCATDiagnostics 当前仅提供 Mock 诊断流。", "故障输出必须区分 current 与 latched 位并保留告警详情。"]
+    },
+    {
+      "id": "ethercat.product-api.control-lifecycle",
+      "area": "online",
+      "titleZh": "租约、状态切换与故障复位",
+      "summaryZh": "执行取得控制、配置、FreeRun/DC 启停、暂停恢复、受控停止和确认式故障复位。",
+      "owner": "ethercat-product-api",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["loopback", "hardware-gated"],
+      "keywords": ["租约", "运行", "停止", "FreeRun", "DC", "Pause", "ResetFault"],
+      "implementation": [
+        {"path": "src/plugins/ethercatproductapi/productapisession.cpp", "symbols": ["ProductApiSession::executeControlCommand", "Protocol::MessageType::StartDc"], "roleZh": "控制命令状态机和租约保护"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/controllerconnection.h", "symbols": ["ControllerControlCommand", "ControllerControlRequest", "ControllerControlProgress"], "roleZh": "通用控制命令合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "cases": ["testControlLifecycle", "testFaultResetLifecycle", "testLeaseExpiryPreservesAutonomousRuntime"], "kind": "loopback"},
+        {"path": "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "cases": ["testHardwareControlLifecycle"], "kind": "hardware-gated"}
+      ],
+      "docs": ["docs/ethercat-online-controller.md"],
+      "dependsOn": ["ethercat.product-api.transport-session"],
+      "notesZh": ["连接断开或租约过期只释放管理所有权，不得停止已经部署的自治周期任务。"]
+    },
+    {
+      "id": "ethercat.product-api.topology-evidence",
+      "area": "online",
+      "titleZh": "真实总线扫描与拓扑证据",
+      "summaryZh": "按用户明确请求读取真实从站顺序、身份、模块和带代际的拓扑证据。",
+      "owner": "ethercat-product-api",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["loopback", "hardware-gated"],
+      "keywords": ["扫描", "真实总线", "拓扑", "从站列表", "DiscoverTopologyEvidence"],
+      "implementation": [
+        {"path": "src/plugins/ethercatproductapi/productapisession.cpp", "symbols": ["DiscoverTopologyEvidence", "TopologyEvidence"], "roleZh": "扫描请求、分页证据和失效处理"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/controllerconnection.h", "symbols": ["ControllerTopologySnapshot", "ControllerTopologySlave", "ControllerTopologyEvidenceValidity"], "roleZh": "在线拓扑证据合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "cases": ["testTopologyEvidenceCodec", "testTopologyEvidenceLifecycle"], "kind": "loopback"},
+        {"path": "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "cases": ["testHardwareControlLifecycle"], "kind": "hardware-gated"}
+      ],
+      "docs": ["docs/ethercat-online-controller.md"],
+      "dependsOn": ["ethercat.product-api.transport-session"],
+      "notesZh": ["真实扫描入口在 Product API/Workbench；EtherCATScan 插件只提供 Mock 工作流。", "连接成功不会隐式扫描，只有用户点击重新扫描才刷新拓扑。"]
+    },
+    {
+      "id": "ethercat.product-api.package-deployment",
+      "area": "online",
+      "titleZh": "运行包部署与激活协议",
+      "summaryZh": "上传、校验、激活、回滚 ECPKG，并投影包状态和审计进度。",
+      "owner": "ethercat-product-api",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["loopback", "not-hardware-qualified"],
+      "keywords": ["部署", "ECPKG", "上传", "校验", "激活", "回滚"],
+      "implementation": [
+        {"path": "src/plugins/ethercatproductapi/productapisession.cpp", "symbols": ["ProductApiSession::deployPackage", "BulkBegin"], "roleZh": "分块上传和包命令状态机"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/controllerconnection.h", "symbols": ["ControllerPackageDeploymentRequest", "ControllerPackageDeploymentProgress"], "roleZh": "部署请求、状态和审计合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "cases": ["testPackageDeploymentLifecycle", "testPackageDeploymentGuardsAndIdempotency"], "kind": "loopback"}
+      ],
+      "docs": ["docs/ethercat-product-api.md"],
+      "dependsOn": ["ethercat.product-api.control-lifecycle"],
+      "notesZh": ["部署协议能力存在不等于本次已在真实硬件完成验收；真实结论必须来自独立硬件门禁。"]
+    },
+    {
+      "id": "ethercat.product-api.runtime-resources",
+      "area": "online",
+      "titleZh": "通用运行时资源读取",
+      "summaryZh": "查询包绑定的资源目录和同周期快照，为厂家无关输入读取提供底层通道。",
+      "owner": "ethercat-product-api",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["loopback", "not-hardware-qualified"],
+      "keywords": ["输入读取", "ResourceTable", "Snapshot", "过程数据", "通用资源"],
+      "implementation": [
+        {"path": "src/plugins/ethercatproductapi/productapisession.cpp", "symbols": ["ProductApiSession::refreshRuntimeResources", "ProductApiSession::requestRuntimeResourceSnapshot"], "roleZh": "资源目录和定向快照请求"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/runtimeresource.h", "symbols": ["RuntimeResourceCatalog", "RuntimeResourceSnapshot", "RuntimeResourceDescriptor"], "roleZh": "通用资源与质量合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "cases": ["testRuntimeResourceLoopbackLifecycle", "testTargetedRuntimeResourceSnapshotLifecycle"], "kind": "loopback"}
+      ],
+      "docs": ["docs/ethercat-product-api.md"],
+      "dependsOn": ["ethercat.product-api.transport-session"],
+      "notesZh": ["ResourceId 必须与完整包 epoch 和签名映射绑定，不能按名称、站号或 PDO 偏移猜测。"]
+    },
+    {
+      "id": "ethercat.product-api.semantic-attestation",
+      "area": "online",
+      "titleZh": "语义映射在线证明",
+      "summaryZh": "查询控制器当前包的签名映射摘要、安全标志和完整运行时 epoch。",
+      "owner": "ethercat-product-api",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["loopback", "artifact", "not-hardware-qualified"],
+      "keywords": ["Attestation", "语义映射", "mapping digest", "签名包", "epoch"],
+      "implementation": [
+        {"path": "src/plugins/ethercatproductapi/productapisession.cpp", "symbols": ["ProductApiSession::requestRuntimeSemanticMappingAttestation", "ProductApiSession::supportsRuntimeSemanticMappingAttestation"], "roleZh": "在线映射证明请求和失效处理"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/semanticmappingattestation.h", "symbols": ["RuntimeSemanticMappingAttestationRequest", "RuntimeSemanticMappingAttestationResult"], "roleZh": "映射证明值合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "cases": ["testSemanticBindingAttestationFormatV2", "testSemanticAttestationLoopbackLifecycle", "testSemanticAttestationInvalidationAndStaleResponse"], "kind": "loopback"}
+      ],
+      "docs": ["docs/ethercat-product-api.md"],
+      "dependsOn": ["ethercat.product-api.runtime-resources"],
+      "notesZh": ["控制器只返回证明摘要；完整 canonical 语义工件来自 IDE 持有并验证的同一 ECPKG。"]
+    },
+    {
+      "id": "ethercat.product-api.output-transactions",
+      "area": "online",
+      "titleZh": "原子输出事务",
+      "summaryZh": "按完整一致性组、OperationId、输出代际和有限 TTL 原子提交通用输出值。",
+      "owner": "ethercat-product-api",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["loopback", "not-hardware-qualified"],
+      "keywords": ["输出控制", "原子写", "OperationId", "TTL", "手动模式"],
+      "implementation": [
+        {"path": "src/plugins/ethercatproductapi/productapisession.cpp", "symbols": ["ProductApiSession::applyRuntimeOutputTransaction", "ProductApiSession::requestRuntimeOutputGroupPolicy"], "roleZh": "输出策略、状态和事务协议"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/runtimeoutputtransaction.h", "symbols": ["RuntimeOutputTransactionRequest", "RuntimeOutputTransactionResult", "RuntimeOutputGroupPolicy"], "roleZh": "通用输出事务合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "cases": ["testOutputTransactionGoldenFrames", "testOutputTransactionCompleteGroupGuards"], "kind": "loopback"},
+        {"path": "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "cases": ["testHardwareApi038ProviderAcceptance"], "kind": "not-hardware-qualified"}
+      ],
+      "docs": ["docs/ethercat-product-api.md"],
+      "dependsOn": ["ethercat.product-api.control-lifecycle", "ethercat.product-api.runtime-resources"],
+      "notesZh": ["当前 Qt 真机 API-038 Provider 验收测试仍明确跳过，不能宣称任意真实输出已通过。"]
+    },
+    {
+      "id": "ethercat.compiler.project-projection",
+      "area": "compiler",
+      "titleZh": "工程快照到编译请求",
+      "summaryZh": "把工程、真实拓扑、ESI、Adapter、目标能力和固定构建身份投影为严格编译输入；compiler v2 可确定性携带完整设备参数与同拓扑只读实测证据。",
+      "owner": "ethercat-project-compiler",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit", "artifact"],
+      "keywords": ["编译请求", "ProjectSnapshot", "设备参数", "observed evidence", "compile recovery v3"],
+      "implementation": [
+        {"path": "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "symbols": ["ProvisionedRuntimePackageCompilerProjectRequestBuilder::build"], "roleZh": "v1 严格工程投影及 v2 已资格化参数、definition 摘要和同拓扑实测证据投影"},
+        {"path": "src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp", "symbols": ["writeVersionThreeExtensions", "readVersionThreeExtensions", "writeCompilerDeviceParameter", "readCompilerDeviceParameter"], "roleZh": "compile-recovery payload v3 保留参数投影、实测证据和参数合同包，并兼容 v1/v2"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/runtimepackagecompilerprojectrequestbuilder.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageCompilerProjectRequestBuilder"], "roleZh": "工程编译请求构建边界"},
+        {"path": "src/libs/ethercatdata/runtimepackagecompiler.cpp", "symbols": ["RuntimePackageCompilerDeviceParameter::isValid", "RuntimePackageCompilerCompileRequest::hasValidReservationInputs", "RuntimePackageCompilerCompileRequest::isValid"], "roleZh": "v1 空参数兼容与 v2 参数、来源、工程快照和实测拓扑闭包"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testProjectRequestBuilderProvisioningAndDeterminism", "testDeviceParametersFailClosedBeforeCompilation", "testDeviceParametersProjectWithCompilerV2", "testCompileRecoveryRoundTrip", "testCompileRecoveryVersionOneCompatibility", "testProjectRequestBuilderFailsClosedOnUnprovenTopology"], "kind": "artifact"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.project.model-format", "ethercat.core.device-parameter-contract", "ethercat.adapters.catalog-authorization", "ethercat.product-api.topology-evidence"],
+      "notesZh": ["v1 请求继续要求设备参数和参数合同包为空，原 canonical bytes 与 SHA 不变；v2 只接受精确合同身份、完整 Qualified Adapter v4 参数闭包和可选的同 Session/Boot/拓扑实测记录。", "Project-only 参数不得伪造 observed；CoE observed 只有精确固定对象、位宽、换算和值匹配时才进入请求。", "显式非空 Startup SDO 仍因缺少 timeout/retry/failure/persistence 等完整签名执行语义而 fail closed，不能猜测默认值。"]
+    },
+    {
+      "id": "ethercat.compiler.backend",
+      "area": "compiler",
+      "titleZh": "外部编译器与不可变工件",
+      "summaryZh": "调用已配置的 v1/v2 外部 compile/finalize/query/verify 后端，并保存幂等操作与参数合同证据。",
+      "owner": "ethercat-project-compiler",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit", "artifact"],
+      "keywords": ["编译器", "compile", "finalize", "verify", "签名", "OperationId"],
+      "implementation": [
+        {"path": "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp", "symbols": ["ProvisionedRuntimePackageCompilerProvider::compile", "ProvisionedRuntimePackageCompilerProvider::verify", "validateExecutionFiles"], "roleZh": "双 Profile 外部进程、空白环境和启动前后复验"},
+        {"path": "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp", "symbols": ["CompilerRuntimeBundleProfile::load", "CompilerRuntimeBundleProfile::validateCurrent", "validateCompilerRuntimeCompanionBinding"], "roleZh": "v1/v2 签名编译器树、签名域、外部信任锚和 v2 Python companion 身份闭包校验"},
+        {"path": "src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.cpp", "symbols": ["CompilerPythonRuntimeProfile::load", "CompilerPythonRuntimeProfile::validateCurrent"], "roleZh": "API-070 签名 companion 与可重定位 Python 树闭集校验"},
+        {"path": "src/plugins/ethercatprojectcompiler/compileroperationstore.cpp", "symbols": ["CompilerOperationStore::materializeCompileArtifacts", "CompilerOperationStore::validateActivationProof"], "roleZh": "持久幂等账本、参数合同物化与激活证明复核"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/runtimepackagecompilercodec.cpp", "symbols": ["encodeRuntimePackageCompilerCompileRequest", "encodeRuntimePackageCompilerFinalizeRequest", "encodeRuntimePackageCompilerVerifyRequest", "decodeRuntimePackageCompilerCompileResult", "decodeRuntimePackageCompilerFinalizeResult", "decodeRuntimePackageCompilerQueryResult", "decodeRuntimePackageCompilerVerifyResult"], "roleZh": "v1 字节兼容、精确 v2 参数 JSON、合同 ID/版本门禁和严格结果解码"},
+        {"path": "src/plugins/ethercatcore/runtimepackagecompilerprovider.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageCompilerProvider"], "roleZh": "可替换编译器 Provider 合同"},
+        {"path": "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.h", "symbols": ["struct CompilerRuntimeBundleExpectation", "class CompilerRuntimeBundleProfile"], "roleZh": "API-068 固定版本、外部公钥和不可变树身份合同"},
+        {"path": "src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.h", "symbols": ["struct CompilerPythonRuntimeExpectation", "class CompilerPythonRuntimeProfile"], "roleZh": "API-070 固定版本、独立公钥和便携身份合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testRuntimePackageCompilerCodec", "testRuntimePackageCompilerV2Codec", "testRuntimePackageCompilerCodecRejectsContractConfusion"], "kind": "unit"},
+        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testPythonRuntimeProfileVerifiesSignedInstalledTree", "testRuntimeBundleProfileVerifiesInstalledTree", "testDeviceParametersProjectWithCompilerV2", "testCompileProcessAndImmutableEvidence", "testFinalizeQueryVerifyAndRestart"], "kind": "artifact"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-compiler-runtime.md"],
+      "dependsOn": ["ethercat.compiler.project-projection"],
+      "notesZh": ["生产私钥不进入 IDE；签名由外部 signer 或 HSM 完成。", "v1 codec 只接受 ethercat-ide-project-compiler-contract-v1/version 1；v2 只接受 ethercat-ide-project-compiler/version 2，结果身份必须与请求一致，不能用 provisioning 重标记 wire。", "v2 compiler manifest 的 companion version/archive/manifest/key/executable/tree/portable identity 七项必须与实际 Python Profile 全值相等；参数合同包同时进入工件根、operation store、recovery v3 和 activation proof。", "API-078 当前交付的签名 v2 runtime 为 motion-disabled，不能生成 API-077 v0.4.2 Section 9；它只证明参数编译合同，不证明 IDE 手动运动。"]
+    },
+    {
+      "id": "ethercat.compiler.preparation",
+      "area": "compiler",
+      "titleZh": "可恢复的编译准备事务",
+      "summaryZh": "串联 compile、detached signing、finalize、verify，并以日志恢复取消或崩溃后的事务。",
+      "owner": "ethercat-project-compiler",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit", "artifact"],
+      "keywords": ["编译准备", "恢复", "日志", "detached signing", "幂等"],
+      "implementation": [
+        {"path": "src/plugins/ethercatprojectcompiler/durableruntimepackagecompilerpreparationcoordinator.cpp", "symbols": ["DurableRuntimePackageCompilerPreparationCoordinator::doStart"], "roleZh": "持久准备协调器"},
+        {"path": "src/plugins/ethercatprojectcompiler/runtimepackagecompilerpreparationjournal.cpp", "symbols": ["RuntimePackageCompilerPreparationJournal"], "roleZh": "事务日志与 CAS"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/runtimepackagecompilerpreparationcoordinator.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageCompilerPreparationCoordinator"], "roleZh": "准备事务公共边界"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testPreparationCoordinatorSuccessAndCancellation", "testPreparationJournalCasRequiresExactPredecessor"], "kind": "artifact"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.compiler.backend"],
+      "notesZh": ["恢复必须复用原 OperationId 和不可变意图；相同 ID 的不同意图必须拒绝。"]
+    },
+    {
+      "id": "ethercat.runtime.package-evidence",
+      "area": "runtime",
+      "titleZh": "签名 ECPKG 与运行包证据",
+      "summaryZh": "校验 canonical ECPKG、Ed25519 生产签名、信任锚、配置和完整来源证据。",
+      "owner": "ethercat-semantic-runtime",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["artifact"],
+      "keywords": ["ECPKG", "Ed25519", "信任", "签名", "证据", "manifest"],
+      "implementation": [
+        {"path": "src/plugins/ethercatsemanticruntime/runtimepackageevidencerepository_p.cpp", "symbols": ["RuntimePackageEvidenceRepository::load", "RuntimePackageEvidenceRepository::import"], "roleZh": "受信包证据导入和重载"},
+        {"path": "src/plugins/ethercatsemanticruntime/ecpkgcontainer.cpp", "symbols": ["parseCanonicalEcpkgContainer"], "roleZh": "canonical 容器解析"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/runtimepackageactivation.h", "symbols": ["RuntimePackageActivationRequest", "RuntimePackageActivationIdentity"], "roleZh": "激活前证据合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp", "cases": ["testSignedEcpkgTransferredPackages", "testRuntimePackageEvidenceRepositoryRejectsUnsafeInputs"], "kind": "artifact"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.compiler.backend"],
+      "notesZh": ["内部 _p.h 是插件私有实现，不得成为其他插件的包含依赖。"]
+    },
+    {
+      "id": "ethercat.runtime.binding-actions",
+      "area": "runtime",
+      "titleZh": "实例语义绑定与动作定义",
+      "summaryZh": "从同一签名包构建项目设备实例、信号、动作、参数和一致性组运行上下文。",
+      "owner": "ethercat-semantic-runtime",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit", "artifact"],
+      "keywords": ["语义绑定", "动作", "实例", "SemanticSignal", "手动控制", "映射"],
+      "implementation": [
+        {"path": "src/plugins/ethercatsemanticruntime/semanticbindingartifact_p.cpp", "symbols": ["verifySemanticBindingArtifact"], "roleZh": "签名语义绑定验证"},
+        {"path": "src/plugins/ethercatsemanticruntime/semanticactionruntimefactory_p.cpp", "symbols": ["buildSemanticActionRuntimeStates", "exactRawValuesEqual"], "roleZh": "动作运行态投影，以及有符号/无符号原始整数的无溢出精确比较"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/semanticruntime.h", "symbols": ["SemanticRuntimeContext", "SemanticActionRuntimeState"], "roleZh": "只公开已验证的通用语义运行态"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp", "cases": ["testSemanticBindingV2TransferredPackage", "testSemanticActionRuntimeFactoryFailsClosed"], "kind": "artifact"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-device-adapters.md"],
+      "dependsOn": ["ethercat.runtime.package-evidence", "ethercat.adapters.catalog-authorization", "ethercat.product-api.runtime-resources", "ethercat.product-api.semantic-attestation"],
+      "notesZh": ["同型号多个实例必须使用各自签名绑定 ID，禁止按名字、位置或站号推断可写资源。", "safeValue 和 literal 原始整数同 variant 时逐值精确比较；跨 qint64/quint64 只允许非负 qint64 与同值 quint64 相等，负数或超范围值不得混等。"]
+    },
+    {
+      "id": "ethercat.runtime.activation",
+      "area": "runtime",
+      "titleZh": "受信运行包激活事务",
+      "summaryZh": "把编译证明、控制器部署、运行时 Attestation 和工程 CAS 组合为可恢复事务。",
+      "owner": "ethercat-semantic-runtime",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["unit", "loopback", "not-hardware-qualified"],
+      "keywords": ["激活", "部署事务", "Attestation", "CAS", "恢复"],
+      "implementation": [
+        {"path": "src/plugins/ethercatsemanticruntime/runtimepackageactivationservice_p.cpp", "symbols": ["TrustedRuntimePackageActivationService::start", "deployPackage"], "roleZh": "受信部署和激活协调"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/runtimepackageactivationservice.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageActivationService"], "roleZh": "Workbench 可调用的激活服务"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp", "cases": ["testTrustedRuntimePackageActivation", "testStrictProviderCardinality"], "kind": "loopback"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.runtime.package-evidence", "ethercat.product-api.package-deployment"],
+      "notesZh": ["状态汇总只用于展示；包、控制器和工程各自仍是其事实来源。"]
+    },
+    {
+      "id": "ethercat.runtime.manual-control",
+      "area": "runtime",
+      "titleZh": "通用语义手动控制执行",
+      "summaryZh": "在审批和受信运行上下文内执行由 WriteGroup、WaitMasked 与 WaitAbsoluteLimit 组成的有界有序签名动作。",
+      "owner": "ethercat-semantic-runtime",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["unit", "loopback", "not-hardware-qualified"],
+      "keywords": ["手动控制", "输入读取", "输出", "动作执行", "审批", "WriteGroup", "WaitMasked", "WaitAbsoluteLimit", "SafeHold", "OutcomeUnknown", "电机"],
+      "implementation": [
+        {"path": "src/plugins/ethercatsemanticruntime/semanticruntimeexecutor.cpp", "symbols": ["SemanticRuntimeExecutor::submit", "SemanticRuntimeExecutor::approve", "SemanticRuntimeExecutorExecution::beginCurrentStep", "SemanticRuntimeExecutorExecution::beginRecovery", "SemanticRuntimeExecutorExecution::freezeUnknown", "SemanticRuntimeExecutorExecution::stateProvesLastSafeHold"], "roleZh": "有界有序步骤、完整资源并集快照、输出事务和故障安全恢复编排"},
+        {"path": "src/plugins/ethercatsemanticruntime/semanticactionplan_p.cpp", "symbols": ["buildSemanticActionPlan"], "roleZh": "私有签名动作计划构建"},
+        {"path": "src/plugins/ethercatsemanticruntime/semanticoperationjournal_p.cpp", "symbols": ["SemanticOperationJournal::recordStep", "SemanticOperationJournal::transition"], "roleZh": "步骤证据和终态闭集；失败步骤只允许 Failed、TimedOut 或 Expired"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/semanticruntimeservice.h", "symbols": ["class ETHERCATCORE_EXPORT SemanticRuntimeService"], "roleZh": "UI 与自动化共享的语义服务"},
+        {"path": "src/libs/ethercatdata/semanticruntime.h", "symbols": ["SemanticOperationRequest", "SemanticOperationRecord"], "roleZh": "语义操作和审计合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp", "cases": ["testExecutorExecutesApi038Xb6Action", "testExecutorRejectsUnauthorizedManualActionBeforeApply", "testExecutorExecutesQualifiedMultiStepAction", "testExecutorBoundsMultiStepWaitFailures", "testExecutorFailsClosedOnMultiStepDrift"], "kind": "loopback"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-device-adapters.md"],
+      "dependsOn": ["ethercat.runtime.binding-actions", "ethercat.product-api.output-transactions", "ethercat.core.manual-control-contract"],
+      "notesZh": ["执行闭集为 1..64 个有序步骤和 1..64 个唯一资源；每个多步动作的全部输出组必须为 HoldSafe。", "动作 before/after 记录都覆盖所有写入和等待资源的完整并集；每个 WriteGroup 使用签名步骤自己的输出 OperationId，并从已证明的 OutputGeneration 串接。", "任一写入可能生效后，TTL 到期优先于值或等待条件判定；失败、超时或漂移只有在控制器精确证明最后一笔事务已经进入 SafeHold 后才释放后续队列。", "OutcomeUnknown 保留同一 apply request 和输出 OperationId，权威 reconcile 之前禁止后续变更；SemanticRuntimeService 当前没有显式动作 cancel 或输出 TTL refresh 接口。", "动作只使用 Adapter 和签名包定义的通用语义，不直接访问原始 PDO、SDO、寄存器或厂家协议。生产 SV630N 动作仍为 disabled/unqualified，本功能只有 unit/loopback 证据，不能宣称真机运动。"]
+    },
+    {
+      "id": "ethercat.workbench.details-routing",
+      "area": "ui",
+      "titleZh": "右侧属性页动态路由",
+      "summaryZh": "根据当前工程树节点装配对应属性页，并为可控设备优先选择 Control 页。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["offscreen-ui"],
+      "keywords": ["右侧面板", "标签页", "节点选中", "Control 默认页", "拖动布局"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/detailsview.cpp", "symbols": ["DetailsView::setCurrentNode", "DetailsView::rebuildPagesWithPreferredKey", "shouldDefaultToControlPage"], "roleZh": "属性页生命周期、焦点和默认页策略"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT PropertyPageProvider", "PropertyPageContext"], "roleZh": "可扩展属性页合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testBuiltInDevicePages", "testDetailsKeyboardFocusContinuity", "testControlPageSelectionPolicy"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-workbench.md"],
+      "dependsOn": ["ethercat.core.provider-registry"],
+      "notesZh": ["页面通过公共服务取数和提交变更，不能持有第二套工程或控制器状态。"]
+    },
+    {
+      "id": "ethercat.workbench.general-overview",
+      "area": "ui",
+      "titleZh": "工程主要信息与主站概览",
+      "summaryZh": "显示和编辑工程、主站关键属性，并汇总运行模式、周期和从站数量。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["offscreen-ui"],
+      "keywords": ["项目主要信息", "循环周期", "运行模式", "从站数量", "General"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/generalpage.cpp", "symbols": ["GeneralPage::setContext", "GeneralPage::commitMasterConfiguration", "GeneralPage::refreshMasterSummary"], "roleZh": "工程与主站 General 页"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/projectsnapshot.h", "symbols": ["ProjectSnapshot"], "roleZh": "工程主要信息来源"},
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT ProjectService"], "roleZh": "编辑提交边界"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testEditableProjectGeneralWorkflow", "testEditableMasterGeneralWorkflow"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-workbench.md"],
+      "dependsOn": ["ethercat.workbench.details-routing", "ethercat.project.mutation"],
+      "notesZh": ["工程关闭或未打开时不保留上一工程摘要。"]
+    },
+    {
+      "id": "ethercat.workbench.project-navigation",
+      "area": "ui",
+      "titleZh": "工程打开、模式和设备树",
+      "summaryZh": "工程打开后进入 EtherCAT Workbench，并统一显示工程、主站、从站、模块和状态树。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["offscreen-ui"],
+      "keywords": ["打开工程", "设备树", "左侧列表", "右键菜单", "筛选", "列宽"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/workbenchnavigation.cpp", "symbols": ["WorkbenchNavigationWidget::showContextMenu", "WorkbenchNavigationWidget::updateProjectSummary"], "roleZh": "设备树、筛选、状态和上下文菜单"},
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchplugin.cpp", "symbols": ["scheduleProjectPresentation", "activateProjectPresentation"], "roleZh": "工程打开后的模式呈现"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/selectionservice.h", "symbols": ["class ETHERCATCORE_EXPORT SelectionService"], "roleZh": "当前树选择合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testProjectOpenShowsMasterDetails", "testNavigationHeaderResizePersistence", "testNavigationCommandsUseActionManager"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-workbench.md"],
+      "dependsOn": ["ethercat.project.mutation"],
+      "notesZh": ["没有打开工程时树必须为空；SelectionService 只保存选择，不保存工程或控制器副本。"]
+    },
+    {
+      "id": "ethercat.workbench.mock-topology-selection",
+      "area": "ui",
+      "titleZh": "Workbench 精确 Mock 拓扑选择",
+      "summaryZh": "在主站 General 页显式选择 Scan Provider，并按工程 Scope 只显示该 Provider 的 Fresh Mock 拓扑。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "mock-only",
+      "evidenceBoundary": ["offscreen-ui"],
+      "keywords": ["Mock topology", "Scan Provider", "General 页", "显式选择", "本地偏好", "Fresh"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "symbols": ["WorkbenchController::selectScanProvider", "WorkbenchController::selectedMockTopology", "WorkbenchController::restoreScanProviderSelections"], "roleZh": "精确选择、Fresh-only 查询和有界本地偏好恢复"},
+        {"path": "src/plugins/ethercatworkbench/workbenchtreemodel.cpp", "symbols": ["WorkbenchTreeModel::setProviderPresentations", "scanPresentationForScope"], "roleZh": "按 Project/Master Scope 投影 Mock 拓扑与状态"},
+        {"path": "src/plugins/ethercatworkbench/generalpage.cpp", "symbols": ["GeneralPage::commitMasterScanProvider", "GeneralPage::refreshMasterSummary"], "roleZh": "Master General 页显式 Provider 选择器"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/scanproviderselectionservice.h", "symbols": ["ScanProviderSelection", "class ETHERCATCORE_EXPORT ScanProviderSelectionService"], "roleZh": "唯一会话级 Provider 选择合同"},
+        {"path": "src/plugins/ethercatcore/topologyservice.h", "symbols": ["TopologySelection", "hasFreshProviderEvidence"], "roleZh": "来源隔离与 Fresh Mock 证据合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testWorkbenchUsesExactMockTopologySelection", "testWorkbenchKeepsMockTopologyScopedAcrossDuplicateMasterIds"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.core.scan-provider-selection", "ethercat.core.topology-service"],
+      "notesZh": ["未选择、缺失、不可用、移除、非 Mock、不完整、陈旧或 scope 不匹配时立即清空且不切换备用 Provider。", "偏好只存于单个有界本地设置记录，最多 128 个 Scope；不修改 .ecatproject、签名工程身份或 ProjectSnapshot。", "选择器只改变本地绑定，不调用 start、cancel、clear、控制器命令或 Discover。"]
+    },
+    {
+      "id": "ethercat.workbench.communication",
+      "area": "ui",
+      "titleZh": "IP、连接、扫描和快捷控制",
+      "summaryZh": "统一 Communication 页、顶部命令、当前总线写入工程和 Qt Creator 快捷按钮的连接与控制流程。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["offscreen-ui", "loopback"],
+      "keywords": ["IP 配置", "连接", "扫描", "运行按钮", "停止按钮", "状态切换"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/communicationpage.cpp", "symbols": ["CommunicationPage::updateControllerControl", "CommunicationPage::updateTopology"], "roleZh": "嵌入式通信和控制页"},
+        {"path": "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "symbols": ["WorkbenchController::connectController", "WorkbenchController::beginControllerStartup", "WorkbenchController::beginControllerStop", "WorkbenchController::applyCurrentBusToProject", "WorkbenchController::selectedRealTopology", "WorkbenchController::projectedControllerConnectionSnapshot"], "roleZh": "UI 无关控制编排、精确真实拓扑投影和显式工程写入"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT ControllerConnectionProvider"], "roleZh": "厂商无关控制器接口"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testControllerCommunicationControlWorkflow", "testControllerCommunicationDoesNotAutoDiscover", "testControllerQuickStopToShutdown", "testWorkbenchUsesExactRealTopologySelection", "testControllerCurrentBusApplyWorkflow", "testControllerCurrentBusApplyPreservesV4Parameters"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-workbench.md", "docs/ethercat-online-controller.md"],
+      "dependsOn": ["ethercat.product-api.control-lifecycle", "ethercat.product-api.topology-evidence"],
+      "notesZh": ["页面只调用 ControllerConnectionProvider 和 Core TopologyService，不依赖 Product API Codec。", "连接报错后由 Provider 快照决定是否保留会话；输出必须显示可操作根因。", "Workbench 只投影工程显式选择的 Fresh RealController 拓扑；Mock、陈旧、不完整、scope/profile 不匹配和 Provider 移除均清空且不替补。", "应用当前总线时，仅已有完整精确选择的 v4 Adapter 可按 ID、版本、内容摘要、Profile 和 Module 重解析并保留 deviceParameters；新设备或无保存选择的设备不自动采用 v4，仍只走现有唯一 v3 自动选择。"]
+    },
+    {
+      "id": "ethercat.workbench.configuration-pages",
+      "area": "ui",
+      "titleZh": "PDO、Startup SDO 和 DC 配置页",
+      "summaryZh": "在右侧属性区编辑厂家无关过程数据、启动参数和分布式时钟配置。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["offscreen-ui"],
+      "keywords": ["PDO 映射", "Startup SDO", "DC 配置", "周期", "右侧面板"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/processdatapage.cpp", "symbols": ["ProcessDataPage::submitConfiguration"], "roleZh": "PDO 与过程映像编辑"},
+        {"path": "src/plugins/ethercatworkbench/startuppage.cpp", "symbols": ["StartupPage::submitConfiguration"], "roleZh": "有序 Startup SDO 编辑"},
+        {"path": "src/plugins/ethercatworkbench/dcpage.cpp", "symbols": ["DcPage::submitConfiguration", "DcPage::selectEsiMode"], "roleZh": "ESI DC 模式和周期编辑"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/offlineconfiguration.h", "symbols": ["ProcessDataConfiguration", "StartupConfiguration", "DcConfiguration"], "roleZh": "离线配置值合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testEditableProcessDataWorkflow", "testEditableStartupWorkflow", "testEditableDcWorkflow"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-offline-configuration.md", "docs/ethercat-workbench.md"],
+      "dependsOn": ["ethercat.devices.esi-repository", "ethercat.project.mutation"],
+      "notesZh": ["这些页面只修改本地工程；生成运行包和部署是独立步骤。"]
+    },
+    {
+      "id": "ethercat.workbench.device-parameters",
+      "area": "ui",
+      "titleZh": "Project-only 设备参数页",
+      "summaryZh": "从唯一精确授权的 Qualified Adapter v4 定义编辑设备参数工程意图，并只读比较 Product API v1.16 会话证据；保存使用现场重验、完整 Project CAS 和 stale Reload 门禁。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["offscreen-ui"],
+      "keywords": ["Device Parameters", "Configured", "Observed", "Verification Status", "Adapter v4", "Product API v1.16", "stale draft", "CAS", "Undo"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/deviceparameterspage.cpp", "symbols": ["DeviceParametersPage::setContext", "DeviceParametersPage::applyConfiguration", "DeviceParametersPage::reloadFromProject"], "roleZh": "精确 ESI/Adapter/Provider 资格化、类型编辑、现场重验、stale 草稿和 Project Apply 生命周期"},
+        {"path": "src/plugins/ethercatworkbench/builtinpropertypages.cpp", "symbols": ["BuiltinPropertyPageProvider::pages", "DEVICE_PARAMETERS_PAGE_ID"], "roleZh": "ConfiguredSlave 属性页注册、创建和上下文更新"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/deviceadapter.h", "symbols": ["DeviceParameterDefinition", "DeviceAdapterResolutionRequest", "ResolvedDeviceModel"], "roleZh": "签名参数定义、精确解析请求和返回模型"},
+        {"path": "src/plugins/ethercatcore/deviceparametercontract.h", "symbols": ["validateConfiguredDeviceParameters"], "roleZh": "Adapter v4 参数定义与工程值资格化入口"},
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["DeviceAdapterProvider", "resolveDevice", "setDeviceParameterConfiguration"], "roleZh": "唯一 Adapter Provider 解析和 Project expected-token 写入边界"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testDeviceParametersPageVisibilityAndQualification", "testDeviceParametersPageEditingAndSafety", "testDeviceParametersPageAxisEvidence", "testDeviceParametersPageRejectsStaleBaselines"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-device-adapters.md", "docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.workbench.details-routing", "ethercat.core.device-parameter-contract", "ethercat.project.mutation", "ethercat.adapters.catalog-authorization", "ethercat.devices.esi-repository"],
+      "notesZh": ["只接受精确 ESI 和唯一 available Provider 的 Qualified、signatureVerified、realHardwareAllowed v4 manifest；resolve request 禁止 Candidate/Mock 并要求真实硬件资格。", "生产 SV630N v4/Authorization v2 已安装；Boolean、有符号/无符号整数、精确有理数和枚举由 signed definition 驱动，default 只作参考，optional 空值不写入。", "Apply 在 Provider 调用后重读完整 Project 并使用 expected ESI/Adapter token；任一 authority 或 Project 漂移保留 stale 草稿并禁用编辑，直到用户 Reload。", "Observed 只消费显式 Real controller 已捕获的 v1.16 会话证据，可显示 Match、Mismatch、Not configured 或 Unavailable；页面不主动 scan、SDO、control、deploy、network 或 hardware，也不把 observed 写入工程。", "非空参数 compiler projection 和设备参数动作尚未闭环；当前仍 fail closed，且不得宣称已部署或已具备真机运动资格。"]
+    },
+    {
+      "id": "ethercat.workbench.esi-library",
+      "area": "ui",
+      "titleZh": "ESI 设备库界面",
+      "summaryZh": "在 Workbench 中导入原始 XML、拖放文件、重建索引并查看设备描述。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["offscreen-ui"],
+      "keywords": ["导入 XML", "ESI 页面", "设备库", "拖放", "重建索引"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/esirepositorypage.cpp", "symbols": ["EsiRepositoryPage::importFiles", "EsiRepositoryPage::reloadDescriptions", "EsiRepositoryPage::dropEvent"], "roleZh": "ESI 库用户交互"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT DeviceRepositoryProvider", "class ETHERCATCORE_EXPORT DeviceImportJob"], "roleZh": "设备库和导入任务合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testEsiDeviceDragDropWorkflow", "testEsiRepositoryGeneralWorkflow", "testEsiRepositoryEmptyGuidance"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-devices-repository.md", "docs/ethercat-workbench.md"],
+      "dependsOn": ["ethercat.devices.esi-repository", "ethercat.workbench.details-routing"],
+      "notesZh": ["XML 原文件和 SHA 是设备事实来源；界面不简化或重写厂家 XML。"]
+    },
+    {
+      "id": "ethercat.workbench.coe-view",
+      "area": "ui",
+      "titleZh": "CoE 参数浏览与 Startup 复制",
+      "summaryZh": "汇总 ESI Startup 参数、PDO 条目和本地配置，并把选定对象复制到 Startup SDO。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "mock-only",
+      "evidenceBoundary": ["offscreen-ui"],
+      "keywords": ["CoE", "对象字典", "SDO", "Startup", "在线参数"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/coeonlinepage.cpp", "symbols": ["CoeOnlinePage::rebuildObjects", "CoeOnlinePage::addSelectedToStartup", "CoeOnlinePage::updateList"], "roleZh": "对象字典和本地 Mock 值界面"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/devicedescription.h", "symbols": ["StartupParameterDescription", "PdoEntryDescription"], "roleZh": "ESI Startup 与 PDO 参数来源"},
+        {"path": "src/libs/ethercatdata/offlineconfiguration.h", "symbols": ["StartupConfiguration"], "roleZh": "Startup SDO 目标配置"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testCoeOnlineMockWorkflow", "testCoeRepositoryReadOnlyWorkflow", "testCoeAddConfirmationRepositoryRefresh"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-workbench.md"],
+      "dependsOn": ["ethercat.devices.esi-repository", "ethercat.project.mutation"],
+      "notesZh": ["当前 CoE 页不是在线 SDO 服务；显示值为本地 Mock，写入只发生在工程 Startup 配置。"]
+    },
+    {
+      "id": "ethercat.workbench.deployment",
+      "area": "ui",
+      "titleZh": "编译准备与运行包部署页",
+      "summaryZh": "加载预制 ECPKG、启动受信编译准备、部署、激活或取消当前操作。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["offscreen-ui", "loopback", "not-hardware-qualified"],
+      "keywords": ["部署页面", "编译", "ECPKG", "激活", "取消", "签名"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/deploymentpage.cpp", "symbols": ["DeploymentPage::loadArtifact", "DeploymentPage::deploy", "DeploymentPage::activateTrustedPackage"], "roleZh": "部署和激活用户界面"},
+        {"path": "src/plugins/ethercatworkbench/runtimepackagecompilerpreparationbridge.cpp", "symbols": ["RuntimePackageCompilerPreparationBridge"], "roleZh": "Workbench 到编译准备服务的桥接"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/runtimepackageactivationservice.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageActivationService"], "roleZh": "受信激活服务"},
+        {"path": "src/plugins/ethercatcore/runtimepackagecompilerpreparationcoordinator.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageCompilerPreparationCoordinator"], "roleZh": "编译准备服务"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testControllerPackageDeploymentWorkflow", "testRuntimePackageCompilerPreparationBridge"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-workbench.md", "docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.compiler.preparation", "ethercat.runtime.activation"],
+      "notesZh": ["预制包直接部署和工程编译准备是不同入口，但最终都必须经过受信包证据和控制器状态门禁。"]
+    },
+    {
+      "id": "ethercat.workbench.semantic-control",
+      "area": "ui",
+      "titleZh": "节点右侧手动控制页",
+      "summaryZh": "选中从站或模块时显示已验证信号、动作、参数、TTL、确认和实时值。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "real-controller",
+      "evidenceBoundary": ["offscreen-ui", "loopback", "not-hardware-qualified"],
+      "keywords": ["Control 页", "节点控制", "输入状态", "输出状态", "电机速度", "手动模式"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/semanticcontrolpage.cpp", "symbols": ["SemanticControlPage::requestSelectedAction", "SemanticControlPage::submitConfirmedAction", "SemanticControlPage::requestLiveRefresh"], "roleZh": "手动控制展示和审批交互"},
+        {"path": "src/plugins/ethercatworkbench/detailsview.cpp", "symbols": ["shouldDefaultToControlPage", "rebuildPagesWithPreferredKey"], "roleZh": "节点选中后的 Control 默认路由"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/semanticruntimeservice.h", "symbols": ["class ETHERCATCORE_EXPORT SemanticRuntimeService"], "roleZh": "共享语义运行时服务"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testControlPageSelectionPolicy", "testSemanticControlPageSignedActions", "testSemanticControlPageSchedulesBoundedLiveRefresh"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-workbench.md"],
+      "dependsOn": ["ethercat.runtime.manual-control"],
+      "notesZh": ["不是任意 PDO 写入页面；只有同一受信包中已签名、已实例绑定且已合格的动作可以启用。"]
+    },
+    {
+      "id": "ethercat.workbench.output-status",
+      "area": "ui",
+      "titleZh": "统一应用程序输出和状态投影",
+      "summaryZh": "把重要连接、控制和故障信息精简写入应用程序输出，并同步树和快捷按钮状态。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "mixed-real-loopback",
+      "evidenceBoundary": ["offscreen-ui"],
+      "keywords": ["应用程序输出", "错误信息", "红灯", "状态栏", "提示精简"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "symbols": ["WorkbenchController::writeControllerOutput", "controllerOutputRequested"], "roleZh": "控制器关键消息格式化"},
+        {"path": "src/plugins/ethercatworkbench/workbenchstatuswidget.cpp", "symbols": ["WorkbenchStatusWidget::updateStatus"], "roleZh": "非连接状态的状态栏投影"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/stateservice.h", "symbols": ["class ETHERCATCORE_EXPORT StateService"], "roleZh": "插件状态汇总服务"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testProviderStartupDiagnosticsPresentation", "testStatusBarIgnoresControllerConnection", "testProviderStateTreeAndNavigation"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-workbench.md"],
+      "dependsOn": ["ethercat.workbench.communication", "ethercat.core.provider-registry"],
+      "notesZh": ["状态栏不重复显示控制器连接；连接状态由树、快捷按钮和应用程序输出表达。"]
+    },
+    {
+      "id": "ethercat.scan.mock-workflow",
+      "area": "mock",
+      "titleZh": "Mock 扫描与拓扑比较",
+      "summaryZh": "为离线开发提供按显式 Provider、工程 Scope 和 Fresh snapshot generation 锁定的可取消模拟扫描、差异比较和接受到工程流程。",
+      "owner": "ethercat-scan",
+      "runtimeBoundary": "mock-only",
+      "evidenceBoundary": ["unit", "offscreen-ui"],
+      "keywords": ["Mock 扫描", "拓扑比较", "接受扫描", "离线"],
+      "implementation": [
+        {"path": "src/plugins/ethercatscan/mockscanprovider.cpp", "symbols": ["MockScanProvider"], "roleZh": "确定性模拟扫描 Provider"},
+        {"path": "src/plugins/ethercatscan/scanworkflow.cpp", "symbols": ["ScanWorkflow::start", "ScanWorkflow::compareWithProject", "ScanWorkflow::acceptScan", "ScanWorkflow::keepExistingConfiguration", "ScanWorkflow::validateExactProviderSelection", "ScanWorkflow::freshMockResult"], "roleZh": "精确 Provider/Scope 选择、Fresh generation 和工程修订门禁下的 Mock 扫描编排"},
+        {"path": "src/plugins/ethercatscan/topologycomparison.cpp", "symbols": ["offlineConfigurationFromScan"], "roleZh": "同一精确设备身份保留工程参数意图，身份或 Adapter 证据变化时清空"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatscan/scanworkflow.h", "symbols": ["class ScanWorkflow", "validateExactProviderSelection", "freshMockResult"], "roleZh": "工作流入口及精确选择、证据代际校验边界"},
+        {"path": "src/plugins/ethercatcore/scanproviderselectionservice.h", "symbols": ["class ETHERCATCORE_EXPORT ScanProviderSelectionService", "ScanProviderSelection"], "roleZh": "工程与主站 Scope 的显式 Scan Provider 选择合同"},
+        {"path": "src/plugins/ethercatcore/topologyservice.h", "symbols": ["class ETHERCATCORE_EXPORT TopologyService", "TopologySelection", "hasFreshProviderEvidence"], "roleZh": "来源隔离的 Fresh Mock 拓扑证据合同"},
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT ScanProvider"], "roleZh": "扫描 Provider 合同"},
+        {"path": "src/libs/ethercatdata/scansnapshot.h", "symbols": ["ScanSnapshot"], "roleZh": "扫描快照值类型"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatscan/ethercatscantests.cpp", "cases": ["testScanPreservesManualConfigurationByIdentity", "testMockProviderStateCancellationAndFailure", "testWorkflowRejectsUnselectedAndStaleMockEvidence", "testWorkflowScopesDuplicateNodeSelection", "testWorkflowAcceptUndoAndRedo"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-scan.md", "docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.devices.esi-repository", "ethercat.project.mutation", "ethercat.core.scan-provider-selection", "ethercat.core.topology-service"],
+      "notesZh": ["此插件不打开 socket、不访问物理网卡，不能作为真实扫描证据。", "Mock 接受只在同一精确设备身份仍成立时保留 ProjectSnapshot 中已有的 deviceParameters 工程意图；Revision、设备或 Adapter 证据变化时清空。它不读取实测设备参数，也不得把 observed 值写入 ProjectSnapshot。", "start、compare、accept 和 discard 只操作 Registry 中同一实例、同一 project/master Scope 显式选择的 Provider；比较和接受持续锁定同一个 Fresh Mock snapshotId，取消与 shutdown 保留无条件安全停止语义。", "接受路径在 GUI 线程同步重读工程修订并在写入前再次校验证据，但 ProjectService 尚无通用 offline-topology CAS，ScanProvider 也没有跨调用者 operation generation；这是当前工作流的同步门禁，不是跨调用者原子事务合同。", "testWorkflowRejectsUnselectedAndStaleMockEvidence 还通过 direct projectChanged 注入覆盖写后并发拓扑变化：最终 exactMatch 或 acceptAllowed 失效时返回“工程已更新但验证失败”，不得显示接受成功。"]
+    },
+    {
+      "id": "ethercat.diagnostics.mock-stream",
+      "area": "mock",
+      "titleZh": "Mock 诊断流",
+      "summaryZh": "生成有界模拟周期、WKC、DC 和告警流，验证诊断界面与生命周期。",
+      "owner": "ethercat-diagnostics",
+      "runtimeBoundary": "mock-only",
+      "evidenceBoundary": ["unit", "offscreen-ui"],
+      "keywords": ["Mock 诊断", "WKC", "DC", "告警", "周期计数"],
+      "implementation": [
+        {"path": "src/plugins/ethercatdiagnostics/mockdiagnosticsprovider.cpp", "symbols": ["MockDiagnosticsProvider"], "roleZh": "模拟诊断 Provider"},
+        {"path": "src/plugins/ethercatdiagnostics/diagnosticsworkflow.cpp", "symbols": ["DiagnosticsWorkflow::startMonitoring", "DiagnosticsWorkflow::requestMode"], "roleZh": "诊断操作和页面状态"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT DiagnosticsProvider"], "roleZh": "诊断 Provider 合同"},
+        {"path": "src/libs/ethercatdata/diagnosticssnapshot.h", "symbols": ["DiagnosticsSnapshot"], "roleZh": "诊断快照值类型"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatdiagnostics/ethercatdiagnosticstests.cpp", "cases": ["testBoundedAggregationAndAlarmLifecycle", "testLivePageUpdatesAndShutdown"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-diagnostics.md"],
+      "dependsOn": ["ethercat.core.provider-registry"],
+      "notesZh": ["真实 ControllerState、Performance 和 Alarm 数据属于 Product API/Workbench，不属于此 Mock 插件。"]
+    },
+    {
+      "id": "ethercat.gateway.loopback-transport",
+      "area": "automation",
+      "titleZh": "回环 MCP 与 REST 监听器",
+      "summaryZh": "以事务方式启动默认关闭、仅绑定 127.0.0.1 的 MCP Streamable HTTP 和 REST 服务。",
+      "owner": "ethercat-automation-gateway",
+      "runtimeBoundary": "loopback-only",
+      "evidenceBoundary": ["unit", "loopback"],
+      "keywords": ["AI", "MCP", "REST", "OpenAPI", "127.0.0.1", "自动化插件"],
+      "implementation": [
+        {"path": "src/plugins/ethercatautomationgateway/gatewayserver.cpp", "symbols": ["GatewayServer::start"], "roleZh": "回环监听器和路由"},
+        {"path": "src/plugins/ethercatautomationgateway/gatewayruntime.cpp", "symbols": ["GatewayRuntimeController", "QHostAddress::LocalHost"], "roleZh": "事务启动、回滚和重启"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatautomationgateway/automationdispatcher.h", "symbols": ["class AutomationDispatcher", "dispatch"], "roleZh": "MCP/REST 共享分发合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatautomationgateway/ethercatautomationgatewaytests.cpp", "cases": ["testDefaultOffAndClosedToolCatalog", "testListenerLifecycleAndAtomicRollback", "testMcpRestIntegrationAndOriginBoundary"], "kind": "loopback"}
+      ],
+      "docs": ["docs/ethercat-automation-gateway.md"],
+      "dependsOn": ["ethercat.core.provider-registry"],
+      "notesZh": ["网关不是控制器 Provider，不得绑定局域网地址或进入 125 us 实时周期。"]
+    },
+    {
+      "id": "ethercat.gateway.controller-views-intents",
+      "area": "automation",
+      "titleZh": "自动化只读视图与语义意图",
+      "summaryZh": "让 MCP/REST 读取 IDE 共享上下文和精确选择的 Real/Mock 拓扑值证据，并提交需要审批的语义操作意图。",
+      "owner": "ethercat-automation-gateway",
+      "runtimeBoundary": "loopback-only",
+      "evidenceBoundary": ["unit", "loopback"],
+      "keywords": ["AI 操作", "controller.get-state", "topology.list-selected", "selected-topology-evidence/v1", "runtime.read", "operation.request", "审批"],
+      "implementation": [
+        {"path": "src/plugins/ethercatautomationgateway/automationdispatcher.cpp", "symbols": ["AutomationDispatcher::mockContexts", "topology.list-selected", "AutomationDispatcher::rejectMutation", "runtime.operation.request"], "roleZh": "旧 Mock 视图、selected-topology 值投影、脱敏和变更拒绝"},
+        {"path": "src/plugins/ethercatautomationgateway/gatewayserver.cpp", "symbols": ["/api/controller-tools/v1/topologies/selected", "topology.list-selected"], "roleZh": "selected-topology REST 与共享 Dispatcher 路由"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/automationservice.h", "symbols": ["AutomationTopologyView", "AutomationContextSnapshot", "class ETHERCATCORE_EXPORT AutomationService"], "roleZh": "Workbench 自动化值快照和精确拓扑 lookup 投影"},
+        {"path": "src/plugins/ethercatcore/topologyservice.h", "symbols": ["TopologySelection", "TopologyLookupResult", "hasFreshProviderEvidence"], "roleZh": "Real/Mock 来源、Scope、generation 与 freshness 公共合同"},
+        {"path": "src/plugins/ethercatcore/semanticruntimeservice.h", "symbols": ["class ETHERCATCORE_EXPORT SemanticRuntimeService"], "roleZh": "语义读取和意图合同"},
+        {"path": "ethercat-ai-controller/api/controller-tools-v1.mcp-tools.json", "symbols": ["controller-tools/v1.1", "topology.list-selected"], "roleZh": "additive MCP 工具协商和闭集 schema"},
+        {"path": "ethercat-ai-controller/api/controller-tools-v1.openapi.json", "symbols": ["/api/controller-tools/v1/topologies/selected", "SelectedTopologyEnvelope"], "roleZh": "additive REST 路由和响应 schema"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatautomationgateway/ethercatautomationgatewaytests.cpp", "cases": ["testSelectedTopologyEvidenceOrderingAndRedaction", "testSelectedTopologyEvidenceFailureClosure", "testSelectedTopologyJournalAndLegacyIsolation", "testMutationsAreRejectedWithoutProviderCalls", "testSemanticRuntimeOperationIntentAndJournal", "testVendorDetailsAreNotProjected"], "kind": "loopback"},
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testWorkbenchUsesExactRealTopologySelection", "testWorkbenchUsesExactMockTopologySelection"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-automation-gateway.md"],
+      "dependsOn": ["ethercat.gateway.loopback-transport", "ethercat.core.topology-service", "ethercat.runtime.manual-control"],
+      "notesZh": ["原有 controller.* 视图仍只接受 Mock context；additive negotiated controller-tools/v1.1 单独新增 topology.list-selected，不改变 controller-tools/v1 envelope 和旧工具语义。", "Workbench 经 TopologyService 为每个 Scope 生成最多各一个精确 Real/Mock AutomationTopologyView；Gateway 只消费 AutomationService 值快照，不持有/选择/调用 Provider，也不触发扫描。", "只有 Fresh 当前证据携带 slaves；陈旧、不完整、错 Scope、Provider 移除或其他 lookup 失败只发布 status，不缓存旧拓扑、不在 Real/Mock 间替补。网关不能审批，也不能直接调用 Product API 或厂家协议。", "selected-topology 整次响应最多 512 条、合计 4096 个从站和 2 MiB 紧凑 JSON；OperationId journal 最多 1024 项且总计 8 MiB。字段越界、Real 结果不完整或任一预算越界都整体 fail closed。"]
+    },
+    {
+      "id": "ethercat.gateway.contract-tools",
+      "area": "automation",
+      "titleZh": "Adapter、工件与协议查询工具",
+      "summaryZh": "提供关闭目录内的 Adapter 列表、外层工件校验和网关协议协商工具。",
+      "owner": "ethercat-automation-gateway",
+      "runtimeBoundary": "loopback-only",
+      "evidenceBoundary": ["unit", "loopback"],
+      "keywords": ["adapter.list", "artifact.validate", "gateway.get-protocol", "工具目录"],
+      "implementation": [
+        {"path": "src/plugins/ethercatautomationgateway/automationdispatcher.cpp", "symbols": ["adapter.list", "artifact.validate", "gateway.get-protocol"], "roleZh": "协议工具分发与闭集校验"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatautomationgateway/automationdispatcher.h", "symbols": ["static QStringList toolNames", "QJsonObject dispatch"], "roleZh": "共享工具目录和分发接口"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatautomationgateway/ethercatautomationgatewaytests.cpp", "cases": ["testArtifactValidationAndBuildSystemSync", "testDefaultOffAndClosedToolCatalog"], "kind": "loopback"}
+      ],
+      "docs": ["docs/ethercat-automation-gateway.md"],
+      "dependsOn": ["ethercat.gateway.loopback-transport"],
+      "notesZh": ["artifact.validate 只检查 controller-tools-v1 外层结构，不替代 ECPKG 签名、Schema 或编译器验证。", "adapter.list 当前可能返回 Registry unavailable，不能据此声称已发布 Adapter 自动化目录。"]
+    }
+  ],
+  "knowledgeCards": [
+    {
+      "id": "architecture",
+      "titleZh": "架构与公共合同知识卡",
+      "purposeZh": "在不遍历实现插件的前提下确认跨插件值对象、Provider 和公共服务的正确边界。",
+      "readOrder": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry", "ethercat.core.scan-provider-selection", "ethercat.core.topology-service", "ethercat.core.manual-control-contract", "ethercat.core.device-parameter-contract"],
+      "callFlowsZh": ["EtherCATData 不可变值对象 -> EtherCATCore 公共合同 -> ProviderRegistry 唯一实现 -> 消费者复制快照。", "设备参数工程意图 -> DeviceParameterConfiguration 有界值 -> Core canonical 合同 -> Project checked mutation；在线 observed 证据保持分离。", "工程/主站 Scope -> ScanProviderSelectionService 精确 Provider ID -> TopologyService Mock 证据查询；无选择或失效时为空且不替补。", "真实或 Mock Provider 原始证据 -> TopologyService 精确来源选择 -> 派生 generation/freshness -> 消费者重新读取。", "插件初始化时注册稳定 Provider ID，卸载前注销；消费者只依赖公开合同和稳定 ID。"],
+      "invariantsZh": ["跨插件数据只能通过公开值类型和 Provider/Service 合同传递。", "Provider ID 在进程内唯一且稳定，冲突诊断必须有界并按稳定身份合并。", "设备参数 Project intent 与控制器 observed 证据必须分离，observed 不进入 ProjectSnapshot。", "Core、Workbench 和 Gateway 不得出现厂家型号、CiA 402 对象或 PDO 偏移分支。"],
+      "changeChecklistZh": ["先判断变更属于值类型、公共合同还是具体 Provider。", "新增值类型时同步元类型、相等语义、序列化边界和合同测试。", "新增 Provider 时验证注册、冲突、卸载、重入和消费者失效路径。", "修改构建依赖时同步同目录 CMake 与 qbs。"],
+      "avoidZh": ["不要创建第二个全局服务或通过 QObject::findChild 查找其他插件对象。", "不要让消费者保存 Provider 私有指针、Socket 或协议对象。", "不要用运行时冲突诊断替代设计时稳定 ID 审查。"]
+    },
+    {
+      "id": "project",
+      "titleZh": "工程模型知识卡",
+      "purposeZh": "维护 .ecatproject 的唯一事实来源、格式迁移和可撤销变更。",
+      "readOrder": ["ethercat.project.model-format", "ethercat.project.mutation"],
+      "callFlowsZh": ["工程文件 -> v0-v7 迁移/校验 -> v8 ProjectSnapshot -> ProjectService 查询。", "设备参数 UI 意图 -> 精确 ESI/Adapter expected token -> ProjectService 检查式 mutation -> Undo 命令 -> projectChanged -> 消费者重新读取快照。"],
+      "invariantsZh": ["ProjectSnapshot 是唯一工程意图事实，页面不得维护第二份可写模型，在线 observed 也不得持久化进来。", "当前持久化格式为 v8，旧版本只能经明确迁移进入当前模型。", "涉及绑定激活的写入必须比较预期 document revision；设备参数写入必须比较预期 ESI/Adapter，拒绝陈旧值。"],
+      "changeChecklistZh": ["先更新数据合同和格式版本/迁移，再接入 Service mutation。", "为合法、非法、旧版本迁移、Undo/Redo 和陈旧 revision 添加测试。", "确认保存后重新打开得到等价快照。"],
+      "avoidZh": ["不要从页面直接修改文档内部对象。", "不要用树节点顺序、显示名或临时指针作为稳定工程身份。", "不要静默丢弃新字段或把未知格式当当前格式读取。"]
+    },
+    {
+      "id": "devices",
+      "titleZh": "设备、ESI 与 Adapter 知识卡",
+      "purposeZh": "用原始厂家证据和数据驱动适配完成精确设备识别，避免在上层写死型号逻辑。",
+      "readOrder": ["ethercat.devices.esi-repository", "ethercat.adapters.catalog-authorization"],
+      "callFlowsZh": ["原始 ESI XML + SHA-256 -> DeviceRepositoryProvider -> Vendor/Product/Revision 精确描述。", "设备身份 + 原始 ESI SHA -> Adapter 目录精确匹配 -> authorization/trust 门禁 -> 工程选择。"],
+      "invariantsZh": ["设备身份必须绑定 VendorId、ProductCode、Revision 和原始 ESI SHA，不能按名称猜测。", "生产 Adapter 必须走与 v3/v4 合同版本精确匹配的独立签名授权；v1/v2 Adapter 只保留兼容读取边界。", "厂家对象、PDO、SDO 和 DC 差异由 Adapter/编译证据表达，不进入 Core、Product API 或页面分支。"],
+      "changeChecklistZh": ["保留并校验原始 XML，不简化或重建厂家证据。", "新增型号时补精确身份、PDO/DC/Startup SDO、语义信号、动作资格和负例。", "验证未授权、哈希漂移、近似 Revision 和重复 Adapter 均 fail closed。"],
+      "avoidZh": ["不要按显示名、站地址、树序号、槽位或 PI offset 推断型号或语义绑定。", "不要在 Adapter 中打开 Socket、操作 UI 或直接写运行时 PDO。", "不要把缺少签名证据的换算或动作标记为 qualified。"]
+    },
+    {
+      "id": "online",
+      "titleZh": "真实控制器在线功能知识卡",
+      "purposeZh": "维护 Product API 三通道、会话、控制权、拓扑证据、部署和原子输出的一致在线快照。",
+      "readOrder": ["ethercat.product-api.transport-session", "ethercat.product-api.telemetry", "ethercat.product-api.control-lifecycle", "ethercat.product-api.topology-evidence", "ethercat.product-api.package-deployment", "ethercat.product-api.runtime-resources", "ethercat.product-api.semantic-attestation", "ethercat.product-api.output-transactions"],
+      "callFlowsZh": ["ControllerProfile/IP -> Control/Push/Bulk 握手 -> Session/Boot 绑定 -> ControllerConnectionSnapshot。", "连接 -> 按策略取得租约 -> 用户明确扫描 -> 新鲜拓扑证据 -> 配置/部署/状态控制。", "已验证 package epoch + semantic attestation -> resource/output policy -> 原子 OutputTransaction -> applied cycle/TTL 状态。"],
+      "invariantsZh": ["连接不等于扫描；只有显式 Discover 才产生或替换新鲜观测拓扑，会话/Boot 变化或新 Discover 开始可使旧拓扑失效或清空。", "握手后的请求必须遵守当前 Session、BootId、RequestId/Sequence 规则；资源、证明和输出等包相关请求还必须绑定各自合同要求的完整 package/topology/runtime epoch。", "管理租约只控制后续变更，断线、Release 或租约过期不得停止健康的自主周期任务。", "current_faults 与 latched_faults 必须分别展示和处理，不能用 AL/WKC 正常掩盖历史锁存故障。"],
+      "changeChecklistZh": ["先确认 wire minor、feature bit、通道、大小、字节序、状态闭集和终态线序。", "为重连、旧 Boot、旧 Session、旧 epoch、租约竞争、超时和幂等重放添加测试。", "错误必须保留 apiStatus、operationResult、阶段、detail 和相关 AlarmEvent。", "真实硬件结论必须绑定精确客户端、控制器镜像、ECPKG、拓扑和证据时间。"],
+      "avoidZh": ["不要在 UI 或 Gateway 重写 ECAP 编解码和 RequestId 分配。", "不要把握手过程、Mock/Loopback 通过或历史硬件记录宣称为当前真机验收。", "不要在错误后保留伪连接状态，也不要用无条件 ResetFault 掩盖 active fault。"]
+    },
+    {
+      "id": "compiler",
+      "titleZh": "编译与准备知识卡",
+      "purposeZh": "把工程快照和新鲜硬件证据确定性转换为可签名、可恢复、可验证的运行包。",
+      "readOrder": ["ethercat.compiler.project-projection", "ethercat.compiler.backend", "ethercat.compiler.preparation"],
+      "callFlowsZh": ["ProjectSnapshot + fresh topology + ESI/Adapter/target capability -> canonical compile request。", "持久账本预留 OperationId/configurationId -> 外部 compile -> detached sign request -> 外部 signer -> finalize -> production verify。", "准备事务恢复编译/签名状态 -> 生成 RuntimePackageEvidence -> 交给激活服务。"],
+      "invariantsZh": ["编译输入必须绑定不可变工程、拓扑、ESI、Adapter、target capability 和构建时间证据。", "IDE 和编译器不持有生产私钥；签名由外部 signer/HSM 完成。", "同 OperationId 只能重放逐字节等价意图，不同意图冲突必须拒绝。", "未冻结支持的 PDO、Startup SDO、DC 或能力选择必须结构化 fail closed。"],
+      "changeChecklistZh": ["先更新 ProjectSnapshot 投影和输入 schema，再修改外部编译合同。", "补 compile/finalize/query/verify 正例、重放、崩溃恢复、签名和内容篡改负例。", "验证同一输入产生逐字节一致 ECPKG，并可由独立 verifier 验证。"],
+      "avoidZh": ["不要从 UI 临时状态或设备名称拼装编译输入。", "不要把任意本地 ECPKG 文件选择当作工程编译闭环。", "不要对不支持的 PDO/SDO/DC 选择静默回退。"]
+    },
+    {
+      "id": "runtime",
+      "titleZh": "签名运行时与控制知识卡",
+      "purposeZh": "在签名包、项目实例、控制器证明和审批一致时执行厂家无关的语义动作。",
+      "readOrder": ["ethercat.runtime.package-evidence", "ethercat.runtime.binding-actions", "ethercat.runtime.activation", "ethercat.runtime.manual-control"],
+      "callFlowsZh": ["production ECPKG -> 容器/签名/payload 校验 -> RuntimePackageEvidence。", "semantic binding/action definitions + Controller attestation + 完整 epoch -> SemanticRuntimeContext。", "用户动作 + 参数/envelope/qualification -> 审批 -> 1..64 个 WriteGroup/WaitMasked/WaitAbsoluteLimit -> 逐步骤 journal。", "写入后异常 -> TTL 优先判定 -> 同一事务状态重读 -> 精确 SafeHold 证明 -> 终态和队列释放；无法证明则保持 OutcomeUnknown。"],
+      "invariantsZh": ["SemanticSignalId 到 ResourceId 只能来自同一受信包的签名绑定，不能运行时猜测。", "可执行计划只接受 1..64 个有序步骤、1..64 个唯一资源和至少一个完整 WriteGroup；多步计划的所有组必须为 HoldSafe。", "动作 before/after 快照必须覆盖所有写入和等待资源的完整并集，回调必须逐字匹配带 step/attempt correlation 的原请求。", "每个 WriteGroup 使用步骤专属输出 OperationId，并以控制器证明的 OutputGeneration 串接；写事务仍覆盖完整 consistency group、精确类型/宽度、有限 TTL 和恢复策略。", "写入可能生效后的失败、超时或漂移只有精确 SafeHold 证明才能释放队列；到期 capture 优先进入 Expired recovery。", "OutcomeUnknown 必须保留同一 apply request 和输出 OperationId，在权威 reconcile 前阻止后续变更。", "只有 enabled 且 qualified 的动作可进入审批；审批不能扩大签名 envelope。", "激活、手动控制和任务运行都必须绑定同一工程、包、拓扑、租约、控制器状态、mapping/action-definition digest 和运行时代际。"],
+      "changeChecklistZh": ["验证 package、manifest、mapping、action definitions、controller attestation、lease/state 和 epoch 的一一对应。", "覆盖 1/64/65 步和资源、三种可执行步骤、typed wait、INT64_MIN、完整并集 before/after、step/attempt correlation 与逐字 request match。", "覆盖 TTL 优先、SafeHold 精确恢复、OutcomeUnknown 同请求 reconcile、failedStep 终态闭集和队列解锁负例。", "当前无显式动作 cancel、hold-to-run 或输出 TTL refresh；扩展公共合同前不得用输入 live refresh 冒充输出续期。", "UI 和 Gateway 必须调用同一语义服务并观察同一 OperationId。"],
+      "avoidZh": ["不要按名称、Vendor、站地址、ordinal、slot 或 PI offset 推断 ResourceId。", "不要从 SemanticRuntime 直接访问原始 PDO/SDO、厂家协议或 Shell。", "不要为演示绕过未 qualified 动作或安全 envelope。", "不要把有界多步 loopback 证据解释为生产 SV630N 已启用或已完成真机运动。"]
+    },
+    {
+      "id": "ui",
+      "titleZh": "Workbench 界面知识卡",
+      "purposeZh": "让工程树、右侧属性页、顶部/左下快捷操作和输出面板投影同一套服务状态。",
+      "readOrder": ["ethercat.workbench.details-routing", "ethercat.workbench.general-overview", "ethercat.workbench.project-navigation", "ethercat.workbench.mock-topology-selection", "ethercat.workbench.communication", "ethercat.workbench.configuration-pages", "ethercat.workbench.device-parameters", "ethercat.workbench.esi-library", "ethercat.workbench.coe-view", "ethercat.workbench.deployment", "ethercat.workbench.semantic-control", "ethercat.workbench.output-status"],
+      "callFlowsZh": ["树节点选择 -> SelectionService -> PropertyPageProvider -> DetailsView 对应页面。", "工具栏、左下控制区和树节点菜单复用同一 QAction -> WorkbenchController/公共服务 -> 输出和状态投影。", "页面编辑 -> ProjectService mutation -> projectChanged -> 树和详情重新读取 ProjectSnapshot。", "ConfiguredSlave -> 精确 ESI + 唯一 Qualified v4 Provider resolve -> Device Parameters 草稿 -> Provider 后完整 Project CAS -> Undo/Redo。"],
+      "invariantsZh": ["页面只投影公共快照，不保存第二套工程、连接或运行状态机。", "同一操作在工具栏、快捷控制和右键菜单复用同一启用条件与处理器。", "关键错误进入应用程序输出并包含可行动原因；普通握手和重复状态不刷屏。", "无工程时设备树为空；连接状态由控制按钮/页面表达，不在底部状态栏重复。", "Device Parameters 的 configured 值是 Project 工程意图；Match、Mismatch、Not configured 或 Unavailable 只来自当前会话 observed 证据，不得暗示已写入驱动器。"],
+      "changeChecklistZh": ["先确认功能所有权和公共合同，再修改页面或 Controller 接线。", "测试选择切换、页面生命周期、可拖动布局、动作 enablement、错误断连和工程重开。", "设备参数页变更必须覆盖唯一 Provider、精确 resolve、manifest 现场重读、post-provider CAS、stale Reload、类型/default 和零在线副作用。", "遵守 Qt Creator 颜色、字体、间距 token 和 CMake/qbs 同步规则。"],
+      "avoidZh": ["不要在 QWidget 中创建协议客户端、Socket、RequestId 或厂家分支。", "不要用独立弹窗替代 Workbench 右侧页面。", "CoE 当前只汇总 ESI Startup/PDO 和本地配置，不要称为在线 SDO 对象字典。", "不要从 Device Parameters 页发起 scan、SDO、control 或 deploy，也不要把 Project Apply 称为设备参数已生效。"]
+    },
+    {
+      "id": "mock",
+      "titleZh": "Mock 工具知识卡",
+      "purposeZh": "提供确定性的离线扫描和诊断测试，同时保持与真实控制器证据的严格隔离。",
+      "readOrder": ["ethercat.scan.mock-workflow", "ethercat.diagnostics.mock-stream"],
+      "callFlowsZh": ["Mock Provider -> 确定性拓扑/诊断快照 -> Workbench 可选页面和离线测试。", "停止 Mock -> 注销 Provider/定时器 -> 页面清空或切回真实来源。"],
+      "invariantsZh": ["Mock 结果必须明确标注 Mock，永远不能作为 Product API 或真实硬件通过证据。", "Mock 插件不得打开控制器 Socket、占用网卡、修改 ControllerConnectionSnapshot 或真实在线拓扑；接受 Mock 扫描写入离线工程必须由用户明确触发并保留 Mock 来源。", "测试数据必须确定、有界且在插件卸载后停止产生。"],
+      "changeChecklistZh": ["覆盖启动、停止、重复启动、卸载、边界计数和页面销毁。", "确认真实 Provider 存在时来源选择明确，不混合两种事实。"],
+      "avoidZh": ["不要为了界面演示让 Mock 自动替代连接失败的真实控制器。", "不要把 Mock 状态名称设计成看似真实但没有来源标识。"]
+    },
+    {
+      "id": "automation",
+      "titleZh": "自动化网关知识卡",
+      "purposeZh": "让外部 AI 通过本机受限入口读取 IDE 共享事实并提交需审批的语义意图。",
+      "readOrder": ["ethercat.gateway.loopback-transport", "ethercat.gateway.controller-views-intents", "ethercat.gateway.contract-tools"],
+      "callFlowsZh": ["默认关闭设置 -> 事务启动 -> 127.0.0.1 MCP/REST -> 同一 AutomationDispatcher。", "Workbench 显式 Real/Mock 选择 -> TopologyService 即时 lookup -> AutomationService 值快照 -> topology.list-selected；Gateway 不查询 Provider 或扫描。", "其他只读工具 -> AutomationService/SemanticRuntimeService 共享快照；变更请求 -> OperationId 意图 -> IDE 审批/策略层。"],
+      "invariantsZh": ["监听器默认关闭且只绑定 127.0.0.1，启动失败必须整体回滚。", "MCP 与 REST 共用分发、journal、审计、错误和证据边界。", "网关不能审批自己的请求，不能点击 UI，不能直接调用厂家 Product API、原始 PDO/SDO 或 Shell。", "原有 controller.* 在线视图只支持 Mock context；独立 selected-topology 扩展可发布显式选择的 Real/Mock 值证据，但只有 Fresh 记录含 slaves，且不能标记为真实状态、遥测或控制能力。"],
+      "changeChecklistZh": ["先在公共服务中建立无 UI 语义能力，再暴露 MCP/REST 薄适配。", "测试默认关闭、回环绑定、协议一致性、拒绝变更、脱敏、重启和端口冲突回滚。", "新增工具时同步闭集目录、参数 schema、权限、OperationId 和审计记录。"],
+      "avoidZh": ["不要绑定 0.0.0.0 或局域网地址。", "不要让 Gateway 持有第二套工程、控制器会话或运行状态。", "不要用自动点击界面实现控制流程。"]
+    }
+  ],
+  "issues": [
+    {
+      "id": "ethercat.issue.compiler-provisioning",
+      "titleZh": "受信编译器交付与发现尚未产品化",
+      "status": "open",
+      "severity": "p0",
+      "affectedFeatures": ["ethercat.compiler.project-projection", "ethercat.compiler.backend", "ethercat.compiler.preparation", "ethercat.workbench.deployment"],
+      "problemZh": "Mac 端受信编译器可执行 bundle、provisioning.json 和当前工程 compile-inputs 尚未形成用户可重复安装和发现的交付路径。",
+      "currentBoundaryZh": "IDE 已实现 API-068 编译器树与 API-070 可重定位 Python 树的独立闭集 Profile；双 Profile Provider 路径在进程启动前及退出后复验两树，并固定空白环境和 API-068 导入根。API-071 v1.0.1 已在 Mac 通过 ZIP 外公钥、Ed25519、canonical manifest 与 payload 闭集门禁，但原生安装在以 Python -I -B 启动 compiler_runtime_relocatable.py 时因同级 runtime_relocator 不可见而失败；失败现场已原子清理，API-072 修正版尚未交付。产品插件固定版本 bootstrap、管理员 provisioning 和当前 ProjectSnapshot input catalog 仍未实现。",
+      "nextActionZh": "先验收 API-072 对 isolated sibling import 的修复，并完成 Mac 双根迁移与 API-068 联合自检；再分别实现产品固定版本 bootstrap 与管理员 provisioning，最后接入当前 ProjectSnapshot input catalog bridge。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-compiler-runtime.md", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilerplugin.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp", "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.h", "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp", "src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.h", "src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.cpp", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp"],
+      "resolutionCriteriaZh": ["干净环境可发现并校验固定版本和哈希的编译器。", "当前工程可确定性生成输入并完成 compile/query/finalize/verify。", "重启和响应丢失后可由持久 OperationId 恢复。"],
+      "notesZh": ["生产私钥不得进入 IDE 或编译器 bundle。", "API-068 与 API-070 的 release key 必须独立固定，当前证据不能作为未来产品全局信任根。", "产品插件仍故意使用 legacy constructor；在 bootstrap 完成前不得回退到 PATH、系统 Python 或未验证目录。", "管理员 provisioning 必须是独立、可审计的安装流程，不能由产品插件启动时隐式执行。", "API-068 provisioning 输出完整 compiler request，不能覆盖 IDE 当前同名 compile-input catalog。"]
+    },
+    {
+      "id": "ethercat.issue.detached-sign-ui-flow",
+      "titleZh": "Workbench detached-sign 流程未形成完整用户闭环",
+      "status": "open",
+      "severity": "p0",
+      "affectedFeatures": ["ethercat.compiler.preparation", "ethercat.runtime.package-evidence", "ethercat.runtime.activation", "ethercat.workbench.deployment"],
+      "problemZh": "界面尚未完整覆盖编译、等待外部签名、恢复、验证和激活的连续流程。",
+      "currentBoundaryZh": "准备协调器和激活事务已经分层，但用户仍可能需要手工选择 ECPKG，不能证明它来自当前工程意图。",
+      "nextActionZh": "由 Workbench 驱动同一 OperationId 的准备状态机，并将签名响应和最终包证据绑定当前工程 revision。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatprojectcompiler/durableruntimepackagecompilerpreparationcoordinator.cpp", "src/plugins/ethercatworkbench/deploymentpage.cpp"],
+      "resolutionCriteriaZh": ["用户不选择任意 ECPKG 即可完成完整流程。", "取消、重启、签名延迟和失败都能恢复并显示明确状态。", "激活前确认包证据与当前工程 revision 一致。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.current-project-hardware-acceptance",
+      "titleZh": "当前工程到真实硬件的完整验收尚未闭环",
+      "status": "blocked",
+      "severity": "p0",
+      "affectedFeatures": ["ethercat.compiler.project-projection", "ethercat.product-api.topology-evidence", "ethercat.product-api.package-deployment", "ethercat.product-api.control-lifecycle", "ethercat.product-api.output-transactions", "ethercat.runtime.activation", "ethercat.runtime.manual-control", "ethercat.workbench.deployment", "ethercat.workbench.semantic-control"],
+      "problemZh": "历史 DC、WKC 和 XB6 输出记录不能代替当前开发板镜像、当前 ECPKG、当前工程和当前拓扑的联合验收。",
+      "currentBoundaryZh": "通用协议、Loopback 和历史真机证据存在；Qt API-038 真机用例仍有未合格/跳过边界。",
+      "nextActionZh": "在独占硬件窗口内固定两层二进制和当前包身份，按只读前置、部署、DC、XB6 输出、停止和最终只读快照完成一次可复现验收。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-product-api.md", "src/plugins/ethercatproductapi/ethercatproductapitests.cpp", "src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp"],
+      "resolutionCriteriaZh": ["证据记录精确客户端、控制器二进制、BootId、ECPKG、拓扑和完整 epoch。", "扫描、配置、DC 运行、原子输出、TTL 恢复和受控停止均由 IDE 公共接口完成。", "结束后无遗留租约、连接或未解释故障。"],
+      "notesZh": ["未满足前不得用历史 WKC 11/11 或 125 us 记录声明当前版本通过。", "当前 blocked 表示依赖受信编译器交付和 detached-sign 用户闭环，不表示瞬时硬件离线。"]
+    },
+    {
+      "id": "ethercat.issue.startup-sdo-compiler",
+      "titleZh": "非空 Startup SDO 尚未进入编译闭环",
+      "status": "open",
+      "severity": "p0",
+      "affectedFeatures": ["ethercat.project.model-format", "ethercat.project.mutation", "ethercat.workbench.configuration-pages", "ethercat.compiler.project-projection", "ethercat.compiler.backend"],
+      "problemZh": "界面和工程格式可编辑并保存 Startup SDO，但当前 compiler request builder 对非空 Startup SDO fail closed。",
+      "currentBoundaryZh": "本地编辑能力不能等同于运行包已经包含或控制器已经应用这些 SDO。",
+      "nextActionZh": "冻结带类型、顺序、状态前置和错误语义的 Startup SDO 编译合同，并在 IDE 投影、编译器和验签证据中同时实现。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp"],
+      "resolutionCriteriaZh": ["合法非空序列有正向编译和包证据。", "错误类型、范围、顺序、对象和状态被结构化拒绝。", "真实从站启动阶段可关联具体 Index/SubIndex 和 abort 诊断。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.device-parameter-qualification",
+      "titleZh": "设备参数资格、扫描实测与编译投影尚未闭环",
+      "status": "open",
+      "severity": "p0",
+      "affectedFeatures": ["ethercat.core.device-parameter-contract", "ethercat.project.model-format", "ethercat.project.mutation", "ethercat.adapters.catalog-authorization", "ethercat.product-api.topology-evidence", "ethercat.compiler.project-projection", "ethercat.workbench.communication", "ethercat.workbench.device-parameters", "ethercat.scan.mock-workflow"],
+      "problemZh": "已资格化设备参数现可进入 compiler v2 request 和 recovery，但产品仍缺少可安装的完整 v2 runtime/companion/provisioning，且显式 Project Startup SDO 的执行语义与 API-077 motion Section 9 尚未在 IDE 闭环。",
+      "currentBoundaryZh": "API-075 生产 SV630N v4/Authorization v2、Workbench configured/observed 页面和 Product API v1.16 会话证据均已存在。compiler v2 现在以精确合同身份携带完整参数 ID、definitionSha256、typed integer value、Project-only null observed 以及同 Session/Boot/拓扑的 CoE observed；v1 canonical bytes 保持不变并继续拒绝参数。参数合同包被物化、持久复核并进入 recovery payload v3，v1/v2 recovery 仍可解码。API-078 的签名 macOS compiler v2 只生成 motion-disabled 包；Windows API-077 cfg7705 是冻结 golden，不是当前 IDE 可重建的运动包。非空显式 Startup SDO 仍因缺少完整签名执行语义而 fail closed。",
+      "nextActionZh": "由 Windows 侧交付新版本、motion-enabled 且闭集签名的 macOS compiler runtime 与 companion 身份，补齐 v0.4.2/API-077 verifier、qualification schemas 和 Section 9 deterministic self-test；IDE 再完成受信安装/provisioning、显式 Startup SDO 全语义投影和真实 compile/deploy 验收。随后独立接入 Product API v1.17 TimedAction start/stop/query 与 Section 9 policy catalog，才允许手动运动。",
+      "evidencePaths": ["docs/ethercat-device-adapters.md", "docs/ethercat-project-format.md", "docs/ethercat-plugin-development-guide.zh_CN.md", "src/libs/ethercatdata/deviceadapter.h", "src/libs/ethercatdata/deviceparameters.h", "src/plugins/ethercatcore/deviceparametercontract.h", "src/plugins/ethercatcore/deviceparametercontract.cpp", "src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp", "src/plugins/ethercatdeviceadapters/deviceadapterauthorization_p.cpp", "src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp", "src/plugins/ethercatproject/ethercatprojectformat.cpp", "src/plugins/ethercatproject/ethercatprojectdocument.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "src/plugins/ethercatworkbench/deviceparameterspage.cpp", "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "src/plugins/ethercatscan/topologycomparison.cpp"],
+      "resolutionCriteriaZh": ["签名 Adapter 定义闭合集合化声明参数 ID、类型、单位、范围、工程到设备投影和允许的实测来源。", "真实扫描证据绑定当前 Session、BootId、拓扑 capture 和精确从站身份；界面明确显示设定值、实测值、一致/不一致/不可用/陈旧状态。", "observed 证据保持会话级并与 ProjectSnapshot 分离；保存、重开、Undo/Redo 和 Mock 扫描均不能把实测值改写成工程意图。", "已资格化非空参数可确定性进入 compiler v2 request、外部签名包和 recovery v3；显式 Startup 语义缺失或任一合同漂移继续 fail closed。", "motion-enabled runtime、Section 9、Product API v1.17 TimedAction 和真机安全停止全部闭环后才开放运动。"],
+      "notesZh": ["compiler v2 参数投影不等于参数已部署或驱动器已应用；当前产品 runtime/provisioning 尚未安装验收。", "API-077 golden ECPKG 可作验收向量，不能冒充任意当前工程的可重建产物。", "在完整资格和真机安全门禁通过前，不得用用户手填值、Mock 结果或拓扑扫描结果宣称正反转能力。"]
+    },
+    {
+      "id": "ethercat.issue.restore-project-binding-guard",
+      "titleZh": "Restore 运行前缺少当前工程绑定门禁",
+      "status": "open",
+      "severity": "p0",
+      "affectedFeatures": ["ethercat.product-api.control-lifecycle", "ethercat.product-api.package-deployment", "ethercat.product-api.semantic-attestation", "ethercat.runtime.package-evidence", "ethercat.runtime.binding-actions", "ethercat.runtime.activation", "ethercat.workbench.communication"],
+      "problemZh": "控制器可能保留持久运行包，但 SHUTDOWN 后 Restore 到运行尚未证明该包与当前打开工程、拓扑和语义绑定完全一致。",
+      "currentBoundaryZh": "控制器可自主保留包是设计目标，IDE 不能仅凭存在 active package 就允许当前工程运行。",
+      "nextActionZh": "在 Run/Restore 前比较当前工程预期包身份、attestation、拓扑和完整 epoch；不一致时要求重新编译/部署或明确只读观察。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "src/plugins/ethercatsemanticruntime/runtimepackageactivationservice_p.cpp"],
+      "resolutionCriteriaZh": ["匹配包可快速 Restore 并运行。", "不匹配、未知或陈旧包被明确阻止且不触发隐式扫描/部署。", "错误输出指出具体不一致字段。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.scan-operation-cas",
+      "titleZh": "扫描接受缺少跨调用者操作令牌与工程 CAS",
+      "status": "planned",
+      "severity": "p1",
+      "affectedFeatures": ["ethercat.scan.mock-workflow", "ethercat.project.mutation", "ethercat.core.scan-provider-selection", "ethercat.core.topology-service", "ethercat.core.provider-registry"],
+      "problemZh": "ScanProvider 没有跨调用者 operation generation，ProjectService::replaceOfflineSlaves 也不接受 expected project revision；多个协调器无法用一个公共原子合同绑定扫描操作、结果代际和待写工程修订。",
+      "currentBoundaryZh": "ScanWorkflow 通过精确 Provider 实例、Scope、Fresh snapshotId 和写入前工程修订重读，在 GUI 线程连续同步调用范围内 fail closed；该门禁不覆盖其他调用者、迟到信号或 Provider 以同一 ID 重新注册后的旧操作。",
+      "nextActionZh": "为 ScanProvider 冻结跨调用者 operation token/generation，并为 replaceOfflineSlaves 增加 expected revision CAS；让结果、信号、取消和工程写入共同校验同一令牌与修订。",
+      "evidencePaths": ["src/plugins/ethercatcore/providers.h", "src/plugins/ethercatcore/providerregistry.h", "src/plugins/ethercatcore/scanproviderselectionservice.h", "src/plugins/ethercatproject/projectserviceimpl.h", "src/plugins/ethercatproject/projectserviceimpl.cpp", "src/plugins/ethercatproject/ethercatprojectdocument.h", "src/plugins/ethercatproject/ethercatprojectdocument.cpp", "src/plugins/ethercatscan/scanworkflow.h", "src/plugins/ethercatscan/scanworkflow.cpp", "src/plugins/ethercatscan/ethercatscantests.cpp"],
+      "resolutionCriteriaZh": ["每次扫描操作产生不可混淆的 operation token，结果、进度、完成和取消均携带并校验该令牌。", "迟到信号和旧操作结果被拒绝，不能覆盖当前选择或当前快照。", "Provider 移除后以同一 ID 重新注册不会复活或接受旧 operation token。", "expected project revision 陈旧时 replaceOfflineSlaves 返回明确 stale 结果且工程、Undo 栈和持久字节均零写入。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.engineering-coordinator",
+      "titleZh": "工程操作协调逻辑仍集中在 WorkbenchController",
+      "status": "planned",
+      "severity": "p1",
+      "affectedFeatures": ["ethercat.workbench.communication", "ethercat.workbench.deployment", "ethercat.workbench.output-status", "ethercat.product-api.control-lifecycle", "ethercat.product-api.package-deployment", "ethercat.runtime.activation", "ethercat.gateway.controller-views-intents"],
+      "problemZh": "连接、租约、扫描、配置、编译、部署、运行和停止仍主要由大型 UI Controller 协调，增加生命周期耦合并阻碍 UI/Gateway 复用。",
+      "currentBoundaryZh": "协议和语义服务已经分层，但缺少统一的无 UI 工程操作协调器。",
+      "nextActionZh": "按操作逐步提取 EngineeringOperationCoordinator，保留 Workbench 为视图和命令适配层。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "src/plugins/ethercatautomationgateway/automationdispatcher.cpp"],
+      "resolutionCriteriaZh": ["同一无 UI 操作可由 Workbench 和 Gateway 发起。", "两种入口观察同一 OperationId、状态、错误和审计。", "页面销毁不终止已提交的后端操作。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.operation-journal",
+      "titleZh": "操作记录尚无统一查询与审计索引",
+      "status": "planned",
+      "severity": "p1",
+      "affectedFeatures": ["ethercat.compiler.preparation", "ethercat.runtime.activation", "ethercat.runtime.manual-control", "ethercat.gateway.controller-views-intents"],
+      "problemZh": "Compiler、Activation、SemanticRuntime 和 Gateway 各有记录，但无法按一个 OperationId 查询完整跨层时间线。",
+      "currentBoundaryZh": "各领域仍拥有自己的状态机；统一层应是只读索引和关联合同，不复制业务所有权。",
+      "nextActionZh": "建立持久 OperationJournal read model，统一 OperationId、父子关系、前后状态、错误、审批和证据引用。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-automation-gateway.md", "src/plugins/ethercatprojectcompiler/durableruntimepackagecompilerpreparationcoordinator.cpp", "src/plugins/ethercatsemanticruntime/semanticoperationjournal_p.cpp"],
+      "resolutionCriteriaZh": ["任一入口可按 OperationId 获得完整有序记录。", "重启后记录可恢复且不会重复执行副作用。", "UI 与 MCP/REST 返回同一终态和错误。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.semantic-action-continuous-control",
+      "titleZh": "持续动作的 hold-to-run、输出续期和显式取消尚未冻结",
+      "status": "planned",
+      "severity": "p1",
+      "affectedFeatures": ["ethercat.core.manual-control-contract", "ethercat.runtime.manual-control", "ethercat.product-api.output-transactions", "ethercat.workbench.semantic-control"],
+      "problemZh": "当前有界多步 executor 只接受 holdToRun=false 的一次性签名动作；SemanticRuntimeService 没有输出 TTL refresh 或显式动作 cancel 命令，输入 live refresh 也不能替代这两个安全合同。",
+      "currentBoundaryZh": "当前可执行闭集是 1..64 个 WriteGroup/WaitMasked/WaitAbsoluteLimit 步骤和 1..64 个唯一资源。写入后的失败或超时必须取得最后一笔事务的精确 SafeHold 证明才释放队列，OutcomeUnknown 保留同一 apply request 并阻止后续变更；这不等于用户已经拥有持续按住运行、输出续期或主动停止接口。",
+      "nextActionZh": "先冻结厂家无关的 hold-to-run、同一输出事务续期和分阶段取消合同，再同步 Core、Product API、SemanticRuntime、Workbench 与审计测试；生产驱动器动作仍须独立完成真实资格化。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-device-adapters.md", "src/plugins/ethercatcore/semanticruntimeservice.h", "src/plugins/ethercatsemanticruntime/semanticactionplan_p.cpp", "src/plugins/ethercatsemanticruntime/semanticruntimeexecutor.cpp", "src/plugins/ethercatsemanticruntime/semanticoperationjournal_p.cpp"],
+      "resolutionCriteriaZh": ["hold-to-run 和 refresh 始终绑定同一签名动作、语义 OperationId、步骤输出 OperationId、request、OutputGeneration、epoch、mapping/action-definition digest、租约、状态和 TTL envelope。", "变更派发前的 cancel 可证明零写入；写入可能生效后的 cancel 只有取得精确 SafeHold 证明才释放队列，OutcomeUnknown 期间不得换 request 或派发新变更。", "取消、续期、到期、断连、迟到响应、重复请求和 UI 释放竞态均有确定终态、逐步骤审计和失败闭集。", "真实型号启用仍需独立的签名单位、范围、安全策略和真机验收，软件接口完成不能替代设备资格。"],
+      "notesZh": ["SemanticRuntime 的 requestLiveRefresh 只刷新输入语义信号快照，不续期输出覆盖。"]
+    },
+    {
+      "id": "ethercat.issue.scan-diagnostics-dependency",
+      "titleZh": "Scan 与 Diagnostics 对 Workbench 存在反向依赖",
+      "status": "planned",
+      "severity": "p1",
+      "affectedFeatures": ["ethercat.scan.mock-workflow", "ethercat.diagnostics.mock-stream", "ethercat.core.provider-registry"],
+      "problemZh": "Mock Scan/Diagnostics 为贡献菜单和页面而直接依赖 Workbench，弱化了公共扩展边界。",
+      "currentBoundaryZh": "两者当前主要是 Mock 插件；迁移不能将 Mock 状态混入真实 Product API。",
+      "nextActionZh": "把贡献点和必要页面合同下移到 Core 公共接口，移除对 Workbench 的编译依赖。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatscan/CMakeLists.txt", "src/plugins/ethercatscan/ethercatscan.qbs", "src/plugins/ethercatdiagnostics/CMakeLists.txt", "src/plugins/ethercatdiagnostics/ethercatdiagnostics.qbs", "src/plugins/ethercatcore/providers.h"],
+      "resolutionCriteriaZh": ["CMake 与 qbs 均不再声明反向依赖。", "Mock 菜单、页面、启动停止和卸载测试保持通过。", "真实/Mock 来源边界不变。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.gateway-real-read-views",
+      "titleZh": "Gateway 真实状态、遥测与操作视图尚未接入",
+      "status": "planned",
+      "severity": "p1",
+      "affectedFeatures": ["ethercat.gateway.controller-views-intents", "ethercat.product-api.telemetry", "ethercat.runtime.manual-control", "ethercat.workbench.output-status"],
+      "problemZh": "Gateway 原有 controller state/capability/device/diagnostics 视图仍只接受 Mock context，也没有真实遥测和跨层 OperationJournal 视图。",
+      "currentBoundaryZh": "显式选择的 Real/Mock 拓扑已通过独立 topology.list-selected 值视图接入；这不放宽旧 controller.*，不代表真实状态、遥测、运行操作或控制已经接入。监听器仍默认关闭并只绑定回环，变更操作仍须经过策略和人工审批。",
+      "nextActionZh": "在公共无 UI state/telemetry/operation read model 完善后，让 AutomationDispatcher 投影同一只读值快照和 OperationJournal，而非持有第二套 Provider 或 Product API 会话。",
+      "evidencePaths": ["docs/ethercat-automation-gateway.md", "src/plugins/ethercatautomationgateway/automationdispatcher.cpp", "src/plugins/ethercatautomationgateway/ethercatautomationgatewaytests.cpp"],
+      "resolutionCriteriaZh": ["真实 state/telemetry/operation 只读值与 Workbench 同源并明确标记 Real。", "MCP/REST 结果、错误和 OperationId 时间线保持一致。", "未经审批的变更仍不调用控制器 Provider。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.adapter-catalog-service",
+      "titleZh": "Adapter 目录尚无统一公共查询服务",
+      "status": "planned",
+      "severity": "p2",
+      "affectedFeatures": ["ethercat.adapters.catalog-authorization", "ethercat.workbench.esi-library", "ethercat.gateway.contract-tools"],
+      "problemZh": "UI 与 Gateway 不能通过同一公共服务读取真实、已授权的 Adapter 目录和资格状态。",
+      "currentBoundaryZh": "adapter.list 可能返回 Registry unavailable；不能据此声称自动化 Adapter 目录已发布。",
+      "nextActionZh": "建立只读 AdapterCatalogService，投影精确身份、版本、授权、信任和能力摘要。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-device-adapters.md", "src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp", "src/plugins/ethercatautomationgateway/automationdispatcher.cpp"],
+      "resolutionCriteriaZh": ["UI 和 Gateway 返回同一已授权目录。", "未授权、哈希漂移和兼容格式有明确状态。", "目录不泄漏私钥或绕过精确匹配。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.crypto-identity-library",
+      "titleZh": "Canonical JSON、哈希与签名实现仍有重复",
+      "status": "planned",
+      "severity": "p2",
+      "affectedFeatures": ["ethercat.adapters.catalog-authorization", "ethercat.compiler.backend", "ethercat.runtime.package-evidence"],
+      "problemZh": "Adapter、Compiler 和 SemanticRuntime 分别处理 canonical JSON、SHA、签名和工件身份，存在语义漂移风险。",
+      "currentBoundaryZh": "抽取只能下沉无 UI、无协议、无厂家逻辑的确定性公共原语。",
+      "nextActionZh": "建立小型公共 identity/crypto 库并以 golden bytes 和跨实现负例锁定行为。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp", "src/plugins/ethercatsemanticruntime/runtimepackageevidence_p.cpp"],
+      "resolutionCriteriaZh": ["三处使用同一 canonicalization 和 identity API。", "现有生产 fixture 字节和验签结果不变。", "畸形、非 canonical、错 key 和摘要漂移均 fail closed。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.task-editor",
+      "titleZh": "通用自动流程编辑器尚未实现",
+      "status": "planned",
+      "severity": "p2",
+      "affectedFeatures": ["ethercat.project.model-format", "ethercat.project.mutation", "ethercat.runtime.binding-actions", "ethercat.compiler.project-projection", "ethercat.compiler.backend", "ethercat.workbench.semantic-control"],
+      "problemZh": "当前聚焦手动语义动作，尚无将动作、条件、延时、循环次数和持续运行编译为任务包的工程编辑器。",
+      "currentBoundaryZh": "CPU1/FPGA 实时边界不变；IDE 只生成受签名工程意图和任务包。",
+      "nextActionZh": "先冻结厂家无关任务图数据合同和安全语义，再增加简约编辑器、编译投影和运行审计。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/libs/ethercatdata/semanticruntime.h", "src/plugins/ethercatworkbench/semanticcontrolpage.cpp"],
+      "resolutionCriteriaZh": ["任务图不包含厂家对象或 PI offset。", "静态校验覆盖类型、动作资格、循环和安全停止。", "同一任务包可独立运行且断开 IDE 不停止健康任务。"],
+      "notesZh": ["整体控制流程编辑按用户此前决定暂后置。"]
+    },
+    {
+      "id": "ethercat.issue.adapter-coverage",
+      "titleZh": "DI、模拟量和更多驱动器缺少精确 Adapter",
+      "status": "planned",
+      "severity": "p2",
+      "affectedFeatures": ["ethercat.devices.esi-repository", "ethercat.adapters.catalog-authorization", "ethercat.runtime.binding-actions", "ethercat.workbench.configuration-pages", "ethercat.workbench.semantic-control"],
+      "problemZh": "通用链路已存在，但只有具备精确 ESI、映射、语义和安全证据的型号才能开放配置与控制。",
+      "currentBoundaryZh": "不得把耦合器状态冒充 DI，也不得用近似产品或 Revision Adapter 代替真实模块。",
+      "nextActionZh": "按每个厂家型号新增原始 ESI、精确 Adapter、语义绑定、动作定义、envelope 和分层验收。",
+      "evidencePaths": ["docs/ethercat-device-adapters.md", "docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp"],
+      "resolutionCriteriaZh": ["每个型号有精确 identity 和原始 ESI SHA。", "读写信号、PDO/SDO/DC 与安全值有签名证据。", "离线、Loopback 和真机证据分别记录。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.sv630n-unit-qualification",
+      "titleZh": "SV630N 速度工程单位换算尚未签名闭环",
+      "status": "blocked",
+      "severity": "p2",
+      "affectedFeatures": ["ethercat.adapters.catalog-authorization", "ethercat.runtime.binding-actions", "ethercat.runtime.manual-control", "ethercat.workbench.semantic-control"],
+      "problemZh": "Windows API-077 已完成双轴 +30 rpm 定时动作资格，但该能力尚未以 IDE 可消费的 motion-enabled 签名 macOS compiler runtime、Section 9 catalog 和 Product API v1.17 TimedAction 公共接口交付。",
+      "currentBoundaryZh": "API-077 v0.4.2 golden 已绑定电子齿轮、编码器、速度限制、停止阈值、2 个 timed-action policies 与真机证据；当前仓库仍安装 motion-disabled v0.4.0，Product API 只到 v1.16，现有 SemanticRuntime 多步输出事务不能替代控制器拥有的 TimedAction。API-078 附带的 compiler v2 也明确 motion_section_9_emitted=false。",
+      "nextActionZh": "先取得新版本 motion-enabled 签名 Mac compiler runtime；随后在 Data/Core/Provider 增加 vendor-neutral TimedAction start/stop/query，Product API 接入 v1.17 三条精确 wire，SemanticRuntime 从已验 ECPKG Section 9 读取 policy ID/SHA，Workbench 只在完整 epoch、包、拓扑、输出代际和 SafeHold 停止证明闭合时开放动作。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-device-adapters.md", "docs/ethercat-compiler-runtime.md", "share/qtcreator/ethercat/adapters/v4/inovance-sv630n-rev00010000.adapter.json", "src/plugins/ethercatproductapi/productapicodec.h", "src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp"],
+      "resolutionCriteriaZh": ["motion-enabled compiler runtime 以新不可变版本、manifest SHA、外部 raw32 key 和 closed-set self-test 交付。", "IDE 从已验 Section 9 获取 policy catalog，不从 Adapter 名称或厂家字段猜测。", "Product API v1.17 TimedAction golden、replay/reconcile、typed stop 和 terminal SafeHold 全覆盖。", "按当前 IDE 公共接口完成受控运动测试并记录精确包、BootId、拓扑与完整 epoch。"],
+      "notesZh": ["Windows frozen cfg7705 可作 golden 与真机证据，不能替代 IDE 从当前工程重编的产物。", "在新 runtime 与 v1.17 路径闭环前不得导入 0.4.2 并复用 legacy output transaction 执行运动。"]
+    },
+    {
+      "id": "ethercat.issue.coe-online-sdo",
+      "titleZh": "CoE 页面尚不是在线 SDO 浏览器",
+      "status": "planned",
+      "severity": "p2",
+      "affectedFeatures": ["ethercat.workbench.coe-view", "ethercat.product-api.runtime-resources"],
+      "problemZh": "当前 CoE 页面由 ESI Startup/PDO 和本地配置汇总，只能辅助复制 Startup SDO，不执行在线 mailbox/SDO 读写。",
+      "currentBoundaryZh": "Product API 当前公共 Runtime Resource 合同不能被冒充为任意 CoE SDO 通道。",
+      "nextActionZh": "未来通过厂家无关、可审计的 mailbox/SDO Provider 增加在线读取；写入必须带状态、权限、类型、超时和审批。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatworkbench/coeonlinepage.cpp", "src/libs/ethercatdata/devicedescription.h"],
+      "resolutionCriteriaZh": ["在线与本地条目有明确来源标识。", "SDO abort code、Index/SubIndex、类型和状态前置完整展示。", "页面不直接持有 Socket 或厂家协议。"],
+      "notesZh": []
+    }
+  ]
+}

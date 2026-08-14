@@ -41,10 +41,11 @@ Module {
     property string ide_author: "The Qt Company Ltd. and other contributors."
     property string ide_copyright_string: "Copyright (C) The Qt Company Ltd. and other contributors."
 
-    property string ide_display_name: 'Qt Creator'
-    property string ide_id: 'qtcreator'
-    property string ide_cased_id: 'QtCreator'
-    property string ide_bundle_identifier: 'org.qt-project.qtcreator'
+    property string ide_settingsvariant: 'EmbedLabsProject'
+    property string ide_display_name: 'Embed Labs'
+    property string ide_id: 'embedlabs'
+    property string ide_cased_id: 'EmbedLabs'
+    property string ide_bundle_identifier: 'org.qt-project.embedlabs'
     property string ide_user_file_extension: '.user'
 
     property string libDirName: "lib"
@@ -99,7 +100,7 @@ Module {
 
     property stringList generalDefines: [
         "QT_CREATOR",
-        'IDE_APP_ID="org.qt-project.qtcreator"',
+        'IDE_APP_ID="org.qt-project.' + ide_id + '"',
         'IDE_LIBRARY_BASENAME="' + libDirName + '"',
         'RELATIVE_PLUGIN_PATH="' + FileInfo.relativePath('/' + ide_bin_path,
                                                          '/' + ide_plugin_path) + '"',

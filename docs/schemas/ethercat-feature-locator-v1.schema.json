@@ -1,0 +1,507 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.embed-labs.dev/qtcreator/ethercat-feature-locator-v1.schema.json",
+  "title": "Embed Labs EtherCAT feature locator v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "format",
+    "formatVersion",
+    "areas",
+    "components",
+    "features",
+    "knowledgeCards",
+    "issues"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "docs/schemas/ethercat-feature-locator-v1.schema.json"
+    },
+    "format": {
+      "const": "embed-labs-ethercat-feature-locator-v1"
+    },
+    "formatVersion": {
+      "const": 1
+    },
+    "areas": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/area"
+      }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/component"
+      }
+    },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/feature"
+      }
+    },
+    "knowledgeCards": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/knowledgeCard"
+      }
+    },
+    "issues": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/issue"
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "\\S"
+    },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!\\.\\.?(?:/|$))(?!.*\\/\\.\\.?(?:\\/|$))[^/]+(?:/[^/]+)*$"
+    },
+    "runtimeBoundary": {
+      "type": "string",
+      "enum": [
+        "contract-only",
+        "engineering-only",
+        "real-controller",
+        "mixed-real-loopback",
+        "loopback-only",
+        "mock-only"
+      ]
+    },
+    "evidenceBoundary": {
+      "type": "string",
+      "enum": [
+        "unit",
+        "offscreen-ui",
+        "loopback",
+        "artifact",
+        "hardware-gated",
+        "not-hardware-qualified"
+      ]
+    },
+    "stringSet": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/nonEmptyString"
+      },
+      "uniqueItems": true
+    },
+    "idSet": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/id"
+      },
+      "uniqueItems": true
+    },
+    "repositoryPathSet": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/repositoryPath"
+      },
+      "uniqueItems": true
+    },
+    "area": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "titleZh"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "titleZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "target",
+        "directory",
+        "cmake",
+        "qbs",
+        "dependsOn",
+        "responsibilityZh"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "target": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "directory": {
+          "$ref": "#/$defs/repositoryPath"
+        },
+        "cmake": {
+          "$ref": "#/$defs/repositoryPath"
+        },
+        "qbs": {
+          "$ref": "#/$defs/repositoryPath"
+        },
+        "metadata": {
+          "$ref": "#/$defs/repositoryPath"
+        },
+        "dependsOn": {
+          "$ref": "#/$defs/idSet"
+        },
+        "responsibilityZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "sourceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "symbols",
+        "roleZh"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/repositoryPath"
+        },
+        "symbols": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1
+            }
+          ]
+        },
+        "roleZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "testReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "cases",
+        "kind"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/repositoryPath"
+        },
+        "cases": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1
+            }
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/evidenceBoundary"
+        }
+      }
+    },
+    "feature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "area",
+        "titleZh",
+        "summaryZh",
+        "owner",
+        "runtimeBoundary",
+        "evidenceBoundary",
+        "keywords",
+        "implementation",
+        "contracts",
+        "tests",
+        "docs",
+        "dependsOn",
+        "notesZh"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "area": {
+          "$ref": "#/$defs/id"
+        },
+        "titleZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "summaryZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "owner": {
+          "$ref": "#/$defs/id"
+        },
+        "runtimeBoundary": {
+          "$ref": "#/$defs/runtimeBoundary"
+        },
+        "evidenceBoundary": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidenceBoundary"
+          }
+        },
+        "keywords": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1
+            }
+          ]
+        },
+        "implementation": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/sourceReference"
+          }
+        },
+        "contracts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/sourceReference"
+          }
+        },
+        "tests": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/testReference"
+          }
+        },
+        "docs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/repositoryPath"
+          }
+        },
+        "dependsOn": {
+          "$ref": "#/$defs/idSet"
+        },
+        "notesZh": {
+          "$ref": "#/$defs/stringSet"
+        }
+      }
+    },
+    "knowledgeCard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "titleZh",
+        "purposeZh",
+        "readOrder",
+        "callFlowsZh",
+        "invariantsZh",
+        "changeChecklistZh",
+        "avoidZh"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "titleZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "purposeZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "readOrder": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/idSet"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 16
+            }
+          ]
+        },
+        "callFlowsZh": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 16
+            }
+          ]
+        },
+        "invariantsZh": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 16
+            }
+          ]
+        },
+        "changeChecklistZh": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 16
+            }
+          ]
+        },
+        "avoidZh": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 16
+            }
+          ]
+        }
+      }
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "titleZh",
+        "status",
+        "severity",
+        "affectedFeatures",
+        "problemZh",
+        "currentBoundaryZh",
+        "nextActionZh",
+        "evidencePaths",
+        "resolutionCriteriaZh",
+        "notesZh"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "titleZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "blocked",
+            "planned",
+            "mitigated"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ]
+        },
+        "affectedFeatures": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/idSet"
+            },
+            {
+              "minItems": 1
+            }
+          ]
+        },
+        "problemZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "currentBoundaryZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "nextActionZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "evidencePaths": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/repositoryPathSet"
+            },
+            {
+              "minItems": 1
+            }
+          ]
+        },
+        "resolutionCriteriaZh": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1
+            }
+          ]
+        },
+        "notesZh": {
+          "$ref": "#/$defs/stringSet"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,1358 @@
+{
+  "openapi": "3.1.1",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "EtherCAT Controller Tools",
+    "version": "1.1.0",
+    "description": "Loopback controller-tools/v1.1 facade. Legacy controller views remain Mock-only/read-only. The additive selected-topology evidence view reports only explicit IDE selections, remains read-only, and never scans or calls a Provider directly."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8765",
+      "description": "IDE-owned loopback gateway"
+    }
+  ],
+  "security": [],
+  "tags": [
+    {
+      "name": "Gateway"
+    },
+    {
+      "name": "Controller"
+    },
+    {
+      "name": "Topology"
+    },
+    {
+      "name": "Adapter"
+    },
+    {
+      "name": "Validation"
+    },
+    {
+      "name": "MCP"
+    }
+  ],
+  "paths": {
+    "/api/controller-tools/v1/protocol": {
+      "get": {
+        "tags": [
+          "Gateway"
+        ],
+        "operationId": "gateway.get-protocol",
+        "summary": "Get protocol and safety boundary",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/controllers": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.list",
+        "summary": "List configured mock controllers",
+        "description": "This reads configured inventory and does not perform network discovery.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/topologies/selected": {
+      "get": {
+        "tags": [
+          "Topology"
+        ],
+        "operationId": "topology.list-selected",
+        "summary": "List explicitly selected topology evidence",
+        "description": "Returns current read-only Fresh evidence or an Unavailable record for every topology source explicitly selected in the IDE. It never triggers a scan.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OperationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SelectedTopologyEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/SelectedTopologyEnvelope"
+          },
+          "409": {
+            "$ref": "#/components/responses/SelectedTopologyEnvelope"
+          }
+        },
+        "x-read-only": true,
+        "x-scan-triggered-by-request": false,
+        "x-direct-provider-calls": false
+      }
+    },
+    "/api/controller-tools/v1/controllers/{controllerId}/capabilities": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.get-capabilities",
+        "summary": "Get controller capabilities",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/controllers/{controllerId}/state": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.get-state",
+        "summary": "Get immutable mock controller state",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/controllers/{controllerId}/topology": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.get-topology",
+        "summary": "Get static mock topology",
+        "description": "Returns a checked-in snapshot; scanned is always false.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/controllers/{controllerId}/devices/{position}": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.get-device",
+        "summary": "Get exact normalized device by position",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          },
+          {
+            "name": "position",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/controllers/{controllerId}/diagnostics": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.get-diagnostics",
+        "summary": "Get static mock diagnostics",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/adapters": {
+      "get": {
+        "tags": [
+          "Adapter"
+        ],
+        "operationId": "adapter.list",
+        "summary": "List mock adapter manifests",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/artifacts/validate": {
+      "post": {
+        "tags": [
+          "Validation"
+        ],
+        "operationId": "artifact.validate",
+        "summary": "Validate an artifact without storing it",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "artifact"
+                ],
+                "properties": {
+                  "artifact": {
+                    "type": "object"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true,
+        "x-idempotent": true
+      }
+    },
+    "/api/controller-tools/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "Gateway"
+        ],
+        "operationId": "gateway.get-openapi",
+        "summary": "Get this OpenAPI document",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1.1 JSON document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/runtime/{controllerId}/context": {
+      "get": {
+        "tags": [
+          "Semantic Runtime"
+        ],
+        "operationId": "runtime.get-context",
+        "summary": "Get one verified semantic runtime context",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          },
+          {
+            "$ref": "#/components/parameters/OperationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true,
+        "x-direct-provider-calls": false
+      }
+    },
+    "/api/controller-tools/v1/runtime/{controllerId}/read": {
+      "post": {
+        "tags": [
+          "Semantic Runtime"
+        ],
+        "operationId": "runtime.read",
+        "summary": "Read one verified semantic signal",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "deviceId",
+                  "signalId",
+                  "contextHash"
+                ],
+                "properties": {
+                  "deviceId": {
+                    "type": "string"
+                  },
+                  "signalId": {
+                    "type": "string"
+                  },
+                  "contextHash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{64}$"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true,
+        "x-direct-provider-calls": false
+      }
+    },
+    "/api/controller-tools/v1/runtime/{controllerId}/operations": {
+      "post": {
+        "tags": [
+          "Semantic Runtime"
+        ],
+        "operationId": "runtime.operation.request",
+        "summary": "Submit one approval-required signed semantic action intent",
+        "description": "The Gateway fills the runtime epoch, mapping proof, and signed action-definition digest from the current IDE context, forces an Automation actor, and calls only SemanticRuntimeService.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "deviceId",
+                  "actionId",
+                  "contextHash",
+                  "ttlCycles"
+                ],
+                "properties": {
+                  "deviceId": {
+                    "type": "string"
+                  },
+                  "actionId": {
+                    "type": "string"
+                  },
+                  "parameters": {
+                    "type": "object"
+                  },
+                  "ttlCycles": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  },
+                  "contextHash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{64}$"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": false,
+        "x-idempotent": true,
+        "x-approval-required": true,
+        "x-automation-can-approve": false,
+        "x-direct-provider-calls": false
+      }
+    },
+    "/api/controller-tools/v1/runtime/operations/{targetOperationId}": {
+      "get": {
+        "tags": [
+          "Semantic Runtime"
+        ],
+        "operationId": "runtime.operation.get",
+        "summary": "Get one shared IDE semantic operation record",
+        "parameters": [
+          {
+            "name": "targetOperationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/OperationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true,
+        "x-direct-provider-calls": false
+      }
+    },
+    "/mcp": {
+      "get": {
+        "tags": [
+          "MCP"
+        ],
+        "operationId": "mcp.listen",
+        "summary": "SSE listening is not implemented",
+        "responses": {
+          "405": {
+            "description": "This skeleton does not expose an SSE stream"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "MCP"
+        ],
+        "operationId": "mcp.dispatch",
+        "summary": "MCP 2025-11-25 Streamable HTTP JSON response mode",
+        "parameters": [
+          {
+            "name": "MCP-Session-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "MCP-Protocol-Version",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "const": "2025-11-25"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "method"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0"
+                  },
+                  "id": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Notification accepted without a body"
+          },
+          "400": {
+            "description": "Malformed request, missing session, or unsupported protocol"
+          },
+          "403": {
+            "description": "Origin rejected"
+          }
+        },
+        "x-read-only": false,
+        "x-approval-required-for-semantic-operations": true,
+        "x-direct-provider-calls": false
+      },
+      "delete": {
+        "tags": [
+          "MCP"
+        ],
+        "operationId": "mcp.close-session",
+        "summary": "Terminate one mock MCP session",
+        "parameters": [
+          {
+            "name": "MCP-Session-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session removed"
+          },
+          "404": {
+            "description": "Session not found"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ControllerId": {
+        "name": "controllerId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        }
+      },
+      "OperationId": {
+        "name": "operationId",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "schemas": {
+      "SelectedTopologyIdentity": {
+        "type": "object",
+        "required": [
+          "vendorId",
+          "productCode",
+          "revision"
+        ],
+        "properties": {
+          "vendorId": {
+            "type": "string",
+            "pattern": "^0x[0-9a-f]{8}$"
+          },
+          "productCode": {
+            "type": "string",
+            "pattern": "^0x[0-9a-f]{8}$"
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^0x[0-9a-f]{8}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedRealTopologySlave": {
+        "type": "object",
+        "required": [
+          "position",
+          "identity",
+          "serial",
+          "stationAddress",
+          "alState"
+        ],
+        "properties": {
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "identity": {
+            "$ref": "#/components/schemas/SelectedTopologyIdentity"
+          },
+          "serial": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          },
+          "stationAddress": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "alState": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedMockTopologySlave": {
+        "type": "object",
+        "required": [
+          "position",
+          "name",
+          "identity",
+          "serial",
+          "alias"
+        ],
+        "properties": {
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "identity": {
+            "$ref": "#/components/schemas/SelectedTopologyIdentity"
+          },
+          "serial": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          },
+          "alias": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyFreshRecord": {
+        "type": "object",
+        "required": [
+          "controllerId",
+          "projectId",
+          "masterId",
+          "source",
+          "lookupStatus",
+          "freshness",
+          "current",
+          "generationHash",
+          "evidenceHash",
+          "observedAt",
+          "complete",
+          "slaves"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "projectId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "masterId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "real-controller",
+              "mock-scan"
+            ]
+          },
+          "lookupStatus": {
+            "type": "string",
+            "const": "success"
+          },
+          "freshness": {
+            "type": "string",
+            "const": "fresh"
+          },
+          "current": {
+            "type": "boolean",
+            "const": true
+          },
+          "generationHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "evidenceHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "complete": {
+            "type": "boolean",
+            "const": true
+          },
+          "slaves": {
+            "type": "array",
+            "maxItems": 4096
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "source": {
+                  "const": "real-controller"
+                }
+              },
+              "required": [
+                "source"
+              ]
+            },
+            "then": {
+              "properties": {
+                "slaves": {
+                  "items": {
+                    "$ref": "#/components/schemas/SelectedRealTopologySlave"
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "slaves": {
+                  "items": {
+                    "$ref": "#/components/schemas/SelectedMockTopologySlave"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "additionalProperties": false
+      },
+      "SelectedTopologyUnavailableRecord": {
+        "type": "object",
+        "description": "An explicitly selected source whose current evidence cannot be published. This object intentionally has no slaves field.",
+        "required": [
+          "controllerId",
+          "projectId",
+          "masterId",
+          "source",
+          "lookupStatus",
+          "freshness",
+          "current"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "projectId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "masterId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "real-controller",
+              "mock-scan"
+            ]
+          },
+          "lookupStatus": {
+            "type": "string",
+            "enum": [
+              "success",
+              "invalid-selection",
+              "provider-not-found",
+              "provider-kind-mismatch",
+              "evidence-unavailable",
+              "scope-mismatch",
+              "evidence-invalid"
+            ]
+          },
+          "freshness": {
+            "type": "string",
+            "enum": [
+              "stale",
+              "incomplete",
+              "unavailable"
+            ]
+          },
+          "current": {
+            "type": "boolean",
+            "const": false
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "lookupStatus": {
+                  "const": "success"
+                }
+              },
+              "required": [
+                "lookupStatus"
+              ]
+            },
+            "then": {
+              "properties": {
+                "freshness": {
+                  "enum": [
+                    "stale",
+                    "incomplete"
+                  ]
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "freshness": {
+                  "const": "unavailable"
+                }
+              }
+            }
+          }
+        ],
+        "additionalProperties": false
+      },
+      "SelectedTopologyData": {
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "source",
+          "readOnly",
+          "scanTriggeredByRequest",
+          "topologies"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "selected-topology-evidence/v1"
+          },
+          "source": {
+            "type": "string",
+            "const": "ide-automation-service"
+          },
+          "readOnly": {
+            "type": "boolean",
+            "const": true
+          },
+          "scanTriggeredByRequest": {
+            "type": "boolean",
+            "const": false
+          },
+          "topologies": {
+            "type": "array",
+            "maxItems": 512,
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SelectedTopologyFreshRecord"
+                },
+                {
+                  "$ref": "#/components/schemas/SelectedTopologyUnavailableRecord"
+                }
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyAuditClient": {
+        "type": "object",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologySuccessAudit": {
+        "type": "object",
+        "required": [
+          "transport",
+          "sessionId",
+          "client",
+          "requestHash",
+          "beforeStateHash",
+          "afterStateHash",
+          "decision",
+          "recordedAt"
+        ],
+        "properties": {
+          "transport": {
+            "type": "string",
+            "enum": [
+              "mcp",
+              "rest"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "client": {
+            "$ref": "#/components/schemas/SelectedTopologyAuditClient"
+          },
+          "requestHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "beforeStateHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "afterStateHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "decision": {
+            "type": "string",
+            "const": "allow-selected-topology-evidence"
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyErrorAudit": {
+        "type": "object",
+        "required": [
+          "transport",
+          "sessionId",
+          "client",
+          "requestHash",
+          "beforeStateHash",
+          "afterStateHash",
+          "decision",
+          "recordedAt"
+        ],
+        "properties": {
+          "transport": {
+            "type": "string",
+            "enum": [
+              "mcp",
+              "rest"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "client": {
+            "$ref": "#/components/schemas/SelectedTopologyAuditClient"
+          },
+          "requestHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "beforeStateHash": {
+            "type": "string",
+            "const": ""
+          },
+          "afterStateHash": {
+            "type": "string",
+            "const": ""
+          },
+          "decision": {
+            "type": "string",
+            "const": "deny"
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyErrorDetails": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "properties": {
+          "argument": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "path",
+          "recovery"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^CT[0-9]{3}_[A-Z0-9_]+$"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "recovery": {
+            "type": "string"
+          },
+          "details": {
+            "$ref": "#/components/schemas/SelectedTopologyErrorDetails"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologySuccessEnvelope": {
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/SelectedTopologyData"
+          },
+          "warnings": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "audit": {
+            "$ref": "#/components/schemas/SelectedTopologySuccessAudit"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit",
+          "error"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "data": {
+            "type": "object",
+            "maxProperties": 0,
+            "additionalProperties": false
+          },
+          "warnings": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "audit": {
+            "$ref": "#/components/schemas/SelectedTopologyErrorAudit"
+          },
+          "error": {
+            "$ref": "#/components/schemas/SelectedTopologyError"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyEnvelope": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SelectedTopologySuccessEnvelope"
+          },
+          {
+            "$ref": "#/components/schemas/SelectedTopologyErrorEnvelope"
+          }
+        ]
+      },
+      "ToolEnvelope": {
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit": {
+            "type": "object",
+            "required": [
+              "userId",
+              "aiClientId",
+              "controllerId",
+              "bootId",
+              "sessionId",
+              "leaseId",
+              "operationId",
+              "parametersSha256",
+              "beforeStateSha256",
+              "afterStateSha256",
+              "result"
+            ]
+          },
+          "error": {
+            "$ref": "#/components/schemas/Error"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "path",
+          "recovery"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^CT[0-9]{3}_[A-Z0-9_]+$"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "recovery": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "responses": {
+      "SelectedTopologyEnvelope": {
+        "description": "Exact selected-topology evidence envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SelectedTopologyEnvelope"
+            }
+          }
+        }
+      },
+      "ToolEnvelope": {
+        "description": "Versioned result envelope with loopback audit evidence",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ToolEnvelope"
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-controller-tools-version": "controller-tools/v1",
+  "x-controller-tools-revision": "controller-tools/v1.1",
+  "x-safety-boundary": {
+    "controllerViews": {
+      "mockOnly": true,
+      "readOnly": true
+    },
+    "selectedTopologyEvidence": {
+      "apiVersion": "selected-topology-evidence/v1",
+      "readOnly": true,
+      "explicitSelectionOnly": true,
+      "realController": true,
+      "mockScan": true,
+      "scanTriggeredByRequest": false,
+      "directProviderCalls": false
+    },
+    "semanticRuntime": {
+      "verifiedContextRead": true,
+      "semanticActionIntentSubmission": true,
+      "actionOnly": true,
+      "ttlUnit": "controller-cycles",
+      "signedActionDefinitionRequired": true,
+      "approvalRequired": true,
+      "automationCanApprove": false,
+      "directProviderCalls": false
+    },
+    "lease": false,
+    "scan": false,
+    "deployment": false,
+    "motion": false
+  }
+}

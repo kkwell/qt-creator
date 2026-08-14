@@ -1,0 +1,14 @@
+{
+    "Id" : "ethercatcore",
+    "DisplayName" : "EtherCAT Core",
+    "Name" : "EtherCATCore",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "kvell",
+    "Vendor" : "Kvell",
+    "Copyright" : "(C) 2026 Kvell",
+    "License" : [ "Commercial Usage" ],
+    "Category" : "EtherCAT",
+    "Description" : "Core services and extension points for EtherCAT engineering plugins.",
+    ${IDE_PLUGIN_DEPENDENCIES}
+}

@@ -1,0 +1,437 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.embed-labs.dev/controller-tools/v1/controller-project.schema.json",
+  "title": "ControllerProject v1",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "properties": {
+    "apiVersion": {
+      "$ref": "common.schema.json#/$defs/ApiVersion"
+    },
+    "kind": {
+      "type": "string",
+      "const": "ControllerProject"
+    },
+    "metadata": {
+      "$ref": "common.schema.json#/$defs/ArtifactMetadata"
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "controller",
+        "topology",
+        "timing",
+        "processImage",
+        "startupSdos",
+        "task",
+        "safety",
+        "deployment"
+      ],
+      "properties": {
+        "controller": {
+          "type": "object",
+          "required": [
+            "controllerId",
+            "bootId",
+            "capabilitySha256"
+          ],
+          "properties": {
+            "controllerId": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "bootId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "capabilitySha256": {
+              "$ref": "common.schema.json#/$defs/Sha256"
+            }
+          },
+          "additionalProperties": false
+        },
+        "topology": {
+          "type": "object",
+          "required": [
+            "source",
+            "topologySha256",
+            "slaves"
+          ],
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "mock",
+                "imported-snapshot",
+                "controller-scan"
+              ]
+            },
+            "topologySha256": {
+              "$ref": "common.schema.json#/$defs/Sha256"
+            },
+            "slaves": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ProjectSlave"
+              },
+              "maxItems": 65535
+            }
+          },
+          "additionalProperties": false
+        },
+        "timing": {
+          "type": "object",
+          "required": [
+            "mode",
+            "cycleUs",
+            "frameCount",
+            "wireTimeNs",
+            "masterWcetNs",
+            "taskWcetNs",
+            "safetyMarginNs",
+            "expectedWorkingCounter"
+          ],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "free-run",
+                "distributed-clocks"
+              ]
+            },
+            "cycleUs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "frameCount": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "wireTimeNs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "masterWcetNs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "taskWcetNs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "safetyMarginNs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "expectedWorkingCounter": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          },
+          "additionalProperties": false
+        },
+        "processImage": {
+          "type": "object",
+          "required": [
+            "inputBytes",
+            "outputBytes",
+            "variables"
+          ],
+          "properties": {
+            "inputBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outputBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "variables": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "slavePosition",
+                  "deviceVariable",
+                  "direction",
+                  "byteOffset",
+                  "bitOffset",
+                  "bitLength"
+                ],
+                "properties": {
+                  "id": {
+                    "$ref": "common.schema.json#/$defs/Id"
+                  },
+                  "slavePosition": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  },
+                  "deviceVariable": {
+                    "$ref": "common.schema.json#/$defs/Id"
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "input",
+                      "output"
+                    ]
+                  },
+                  "byteOffset": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "bitOffset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 7
+                  },
+                  "bitLength": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  }
+                },
+                "additionalProperties": false
+              },
+              "maxItems": 65536
+            }
+          },
+          "additionalProperties": false
+        },
+        "startupSdos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "slavePosition",
+              "order",
+              "transition",
+              "index",
+              "subIndex",
+              "valueHex",
+              "timeoutMs",
+              "adapterId"
+            ],
+            "properties": {
+              "slavePosition": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "order": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "transition": {
+                "type": "string",
+                "enum": [
+                  "IP",
+                  "PS",
+                  "SO",
+                  "OP"
+                ]
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "subIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "valueHex": {
+                "$ref": "common.schema.json#/$defs/HexBytes"
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60000
+              },
+              "adapterId": {
+                "$ref": "common.schema.json#/$defs/Id"
+              }
+            },
+            "additionalProperties": false
+          },
+          "maxItems": 65536
+        },
+        "task": {
+          "type": "object",
+          "required": [
+            "controlIntentId",
+            "controlIntentVersion",
+            "language",
+            "buildState",
+            "etirSha256",
+            "ecpkgSha256"
+          ],
+          "properties": {
+            "controlIntentId": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "controlIntentVersion": {
+              "$ref": "common.schema.json#/$defs/SemVer"
+            },
+            "language": {
+              "type": "string",
+              "const": "ecl-v1"
+            },
+            "buildState": {
+              "type": "string",
+              "enum": [
+                "not-built",
+                "validated",
+                "packaged"
+              ]
+            },
+            "etirSha256": {
+              "oneOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/Sha256"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ecpkgSha256": {
+              "oneOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/Sha256"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "safety": {
+          "type": "object",
+          "required": [
+            "unknownDeviceAction",
+            "validationRequired",
+            "safeOutputPolicyId",
+            "motionPolicyId"
+          ],
+          "properties": {
+            "unknownDeviceAction": {
+              "type": "string",
+              "const": "reject-output"
+            },
+            "validationRequired": {
+              "type": "boolean"
+            },
+            "safeOutputPolicyId": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "motionPolicyId": {
+              "$ref": "common.schema.json#/$defs/Id"
+            }
+          },
+          "additionalProperties": false
+        },
+        "deployment": {
+          "type": "object",
+          "required": [
+            "mode",
+            "slot",
+            "approvalDecision",
+            "signature"
+          ],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "offline-only",
+                "stage-candidate",
+                "activate-candidate"
+              ]
+            },
+            "slot": {
+              "type": "string",
+              "enum": [
+                "none",
+                "A",
+                "B"
+              ]
+            },
+            "approvalDecision": {
+              "type": "string",
+              "enum": [
+                "not-evaluated",
+                "preauthorized",
+                "approved",
+                "rejected"
+              ]
+            },
+            "signature": {
+              "oneOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/Signature"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "ProjectSlave": {
+      "type": "object",
+      "required": [
+        "position",
+        "stationAddress",
+        "identity",
+        "esiSha256",
+        "deviceModelId",
+        "adapter"
+      ],
+      "properties": {
+        "position": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "stationAddress": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "identity": {
+          "$ref": "common.schema.json#/$defs/Identity"
+        },
+        "esiSha256": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "deviceModelId": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "adapter": {
+          "$ref": "common.schema.json#/$defs/AdapterRef"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.embed-labs.dev/controller-tools/v1/common.schema.json",
+  "title": "Controller Tools v1 Common Types",
+  "type": "object",
+  "$defs": {
+    "ApiVersion": {
+      "type": "string",
+      "const": "controller.embed-labs.dev/v1"
+    },
+    "Id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "minLength": 3,
+      "maxLength": 128
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "HexBytes": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-fA-F]{2})*$",
+      "maxLength": 8192
+    },
+    "SemVer": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "Identity": {
+      "type": "object",
+      "required": [
+        "vendorId",
+        "productCode",
+        "revision"
+      ],
+      "properties": {
+        "vendorId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "productCode": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "serial": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "additionalProperties": false
+    },
+    "ArtifactMetadata": {
+      "type": "object",
+      "required": [
+        "id",
+        "version",
+        "createdAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "version": {
+          "$ref": "#/$defs/SemVer"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "maxProperties": 32
+        }
+      },
+      "additionalProperties": false
+    },
+    "ObjectAddress": {
+      "type": "object",
+      "required": [
+        "index",
+        "subIndex"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "subIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      },
+      "additionalProperties": false
+    },
+    "DataType": {
+      "type": "string",
+      "enum": [
+        "boolean",
+        "integer8",
+        "unsigned-integer8",
+        "integer16",
+        "unsigned-integer16",
+        "integer32",
+        "unsigned-integer32",
+        "integer64",
+        "unsigned-integer64",
+        "real32",
+        "real64",
+        "visible-string",
+        "octet-string",
+        "unknown"
+      ]
+    },
+    "Evidence": {
+      "type": "object",
+      "required": [
+        "kind",
+        "result",
+        "artifactSha256"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "schema-validation",
+            "offline-simulation",
+            "loopback-test",
+            "hardware-test",
+            "engineering-review"
+          ]
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "not-run"
+          ]
+        },
+        "artifactSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "recordedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false
+    },
+    "Signature": {
+      "type": "object",
+      "required": [
+        "algorithm",
+        "keyId",
+        "signedSha256",
+        "valueBase64"
+      ],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "enum": [
+            "ed25519",
+            "ecdsa-p256-sha256"
+          ]
+        },
+        "keyId": {
+          "$ref": "#/$defs/Id"
+        },
+        "signedSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "valueBase64": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "minLength": 16,
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false
+    },
+    "AdapterRef": {
+      "type": "object",
+      "required": [
+        "adapterId",
+        "version",
+        "manifestSha256"
+      ],
+      "properties": {
+        "adapterId": {
+          "$ref": "#/$defs/Id"
+        },
+        "version": {
+          "$ref": "#/$defs/SemVer"
+        },
+        "manifestSha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

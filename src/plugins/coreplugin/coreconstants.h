@@ -9,12 +9,14 @@ namespace Core::Constants {
 
 // Modes
 inline constexpr char MODE_WELCOME[]          = "Welcome";
+inline constexpr char MODE_EASYBOARD[]        = "EasyBoard";
 inline constexpr char MODE_EDIT[]             = "Edit";
 inline constexpr char MODE_DESIGN[]           = "Design";
 inline constexpr char MODE_SETTINGS[]         = "Settings";
 inline constexpr int  P_MODE_WELCOME          = 100;
 inline constexpr int  P_MODE_EDIT             = 90;
 inline constexpr int  P_MODE_DESIGN           = 89;
+inline constexpr int  P_MODE_EASYBOARD        = 70;
 inline constexpr int  P_MODE_SETIINGS         = 20;
 
 // TouchBar
@@ -41,6 +43,7 @@ inline constexpr char M_HELP[]                = "QtCreator.Menu.Help";
 // Contexts
 inline constexpr char C_GLOBAL[]              = "Global Context";
 inline constexpr char C_WELCOME_MODE[]        = "Core.WelcomeMode";
+inline constexpr char C_EASYBOARD_MODE[]      = "Core.EasyBoardMode";
 inline constexpr char C_EDIT_MODE[]           = "Core.EditMode";
 inline constexpr char C_DESIGN_MODE[]         = "Core.DesignMode";
 inline constexpr char C_DEBUG_MODE[]          = "Debugger.DebugMode";

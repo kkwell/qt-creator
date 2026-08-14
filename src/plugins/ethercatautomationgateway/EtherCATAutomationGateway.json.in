@@ -1,0 +1,15 @@
+{
+    "Id" : "ethercatautomationgateway",
+    "DisplayName" : "EtherCAT Automation Gateway",
+    "Name" : "EtherCATAutomationGateway",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "kvell",
+    "Vendor" : "Kvell",
+    "Copyright" : "(C) 2026 Kvell",
+    "License" : [ "Commercial Usage" ],
+    "Category" : "EtherCAT",
+    "Description" : "Loopback MCP and REST with mock controller views and approved semantic action intents.",
+    "SoftLoadable" : true,
+    ${IDE_PLUGIN_DEPENDENCIES}
+}

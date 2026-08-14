@@ -1,0 +1,1216 @@
+// Copyright (C) 2026 Embed Labs
+
+#include "provisionedruntimepackagecompilerprovider.h"
+
+#include "compileroperationstore.h"
+#include "compilerpythonruntimeprofile.h"
+#include "compilerprovisioningprofile.h"
+#include "compilerruntimebootstrapprofile.h"
+#include "compilerruntimebundleprofile.h"
+#include "ethercatprojectcompilerconstants.h"
+#include "ethercatprojectcompilertr.h"
+
+#include <ethercatcore/runtimepackagecompilercodec.h>
+
+#include <utils/commandline.h>
+#include <utils/environment.h>
+#include <utils/qtcprocess.h>
+
+#include <QDir>
+#include <QFileInfo>
+#include <QProcess>
+#include <QSet>
+#include <QThread>
+#include <QTimer>
+
+#include <functional>
+#include <optional>
+#include <utility>
+
+namespace EtherCAT::ProjectCompiler {
+
+namespace {
+
+std::optional<QString> plannedCanonicalPath(const Utils::FilePath &path)
+{
+    if (!path.isAbsolutePath() || !path.scheme().isEmpty())
+        return std::nullopt;
+    QString current = QDir::cleanPath(path.path());
+    QStringList missingComponents;
+    while (!QFileInfo::exists(current)) {
+        const QFileInfo info(current);
+        const QString parent = QDir::cleanPath(info.dir().absolutePath());
+        if (parent == current || info.fileName().isEmpty())
+            return std::nullopt;
+        missingComponents.prepend(info.fileName());
+        current = parent;
+    }
+    current = QFileInfo(current).canonicalFilePath();
+    if (current.isEmpty())
+        return std::nullopt;
+    for (const QString &component : std::as_const(missingComponents))
+        current = QDir(current).filePath(component);
+    return QDir::cleanPath(current);
+}
+
+QString userFacingProvisioningError(const QString &error)
+{
+    if (error.startsWith(
+            QStringLiteral("Compiler runtime expectation profile is unavailable:"))) {
+        return Tr::tr("No trusted compiler runtime expectation profile is installed.");
+    }
+    if (error.startsWith(QStringLiteral("Provisioned path is not a regular non-symlink file:"))) {
+        return Tr::tr("No trusted compiler provisioning profile is installed.");
+    }
+    if (error.startsWith(QStringLiteral("Provisioned file exceeds its size limit:"))
+        || error.startsWith(QStringLiteral("Provisioned compiler is not executable:"))
+        || error.startsWith(QStringLiteral("Cannot securely open provisioned file:"))
+        || error.startsWith(QStringLiteral("Provisioned file changed while it was opened:"))
+        || error.startsWith(QStringLiteral("Provisioned file changed while it was read:"))
+        || error.startsWith(QStringLiteral("Cannot completely read provisioned file:"))
+        || error.startsWith(QStringLiteral("Pinned compiler or production key changed"))) {
+        return Tr::tr("Trusted compiler provisioning files do not meet security requirements.");
+    }
+    return error;
+}
+
+using JobResultDecoder = std::function<Utils::Result<Data::RuntimePackageCompilerJobResult>(
+    const CompilerOperationLease &, const Core::RuntimePackageCompilerProcessOutput &)>;
+using QueryResultDecoder = std::function<Utils::Result<Data::RuntimePackageCompilerQueryResult>(
+    const CompilerOperationLease &, const Core::RuntimePackageCompilerProcessOutput &)>;
+
+Utils::CommandLine commandLine(
+    const Utils::FilePath &executable, const QString &command, const QStringList &arguments)
+{
+    QStringList complete{command};
+    complete.append(arguments);
+    return Utils::CommandLine(executable, complete);
+}
+
+Utils::Result<Data::RuntimePackageCompilerQueryResult> decodeExactOperationUnknown(
+    const Data::RuntimePackageCompilerQueryRequest &request,
+    const Core::RuntimePackageCompilerProcessOutput &output)
+{
+    const Utils::Result<Data::RuntimePackageCompilerQueryResult> decoded
+        = Core::decodeRuntimePackageCompilerQueryResult(request, output);
+    if (!decoded || decoded->envelope.operationId != request.operationId
+        || decoded->envelope.requestSha256 != request.compileRequestSha256
+        || decoded->envelope.status != Data::RuntimePackageCompilerResultStatus::DomainFailed
+        || decoded->hasRecoveredResult() || decoded->envelope.diagnostics.size() != 1) {
+        return Utils::ResultError(
+            Tr::tr("Missing operation query did not return an authoritative unknown result."));
+    }
+    const Data::RuntimePackageCompilerDiagnostic &diagnostic
+        = decoded->envelope.diagnostics.constFirst();
+    if (diagnostic.category != Data::RuntimePackageCompilerDiagnosticCategory::Idempotency
+        || diagnostic.severity != Data::RuntimePackageCompilerDiagnosticSeverity::Error
+        || diagnostic.stage != QStringLiteral("configuration")
+        || diagnostic.code != QStringLiteral("ECOMP-OPERATION-UNKNOWN")
+        || diagnostic.path != QStringLiteral("$.operation_id") || diagnostic.retryable) {
+        return Utils::ResultError(
+            Tr::tr("Missing operation query returned a different terminal result."));
+    }
+    return *decoded;
+}
+
+class ProvisionedCompilerJob final : public Core::RuntimePackageCompilerJob
+{
+public:
+    struct Setup
+    {
+        Data::RuntimePackageCompilerCommand command = Data::RuntimePackageCompilerCommand::Unknown;
+        Utils::CommandLine primaryCommand;
+        Utils::FilePath workingDirectory;
+        std::chrono::milliseconds primaryTimeout;
+        std::optional<Utils::CommandLine> reconciliationCommand;
+        std::chrono::milliseconds reconciliationTimeout;
+        std::chrono::milliseconds cancellationGrace;
+        qsizetype maximumStandardOutputBytes = 0;
+        qsizetype maximumStandardErrorBytes = 0;
+        CompilerOperationLease lease;
+        JobResultDecoder decodePrimary;
+        QueryResultDecoder decodeReconciliation;
+        std::function<Utils::Result<>(const CompilerOperationLease &)> validateProvisioning;
+        std::optional<Utils::Environment> processEnvironment;
+    };
+
+    explicit ProvisionedCompilerJob(Setup setup, QObject *parent)
+        : Core::RuntimePackageCompilerJob(setup.command, parent)
+        , m_setup(std::move(setup))
+    {
+        m_timeout.setSingleShot(true);
+        m_cancellationTimer.setSingleShot(true);
+        connect(&m_process, &Utils::Process::started, this, [this] {
+            if (m_phase == Phase::Primary)
+                markRunning();
+        });
+        connect(&m_process, &Utils::Process::readyReadStandardOutput, this, [this] {
+            appendOutput(m_process.readAllRawStandardOutput(), true);
+        });
+        connect(&m_process, &Utils::Process::readyReadStandardError, this, [this] {
+            appendOutput(m_process.readAllRawStandardError(), false);
+        });
+        connect(&m_process, &Utils::Process::done, this, [this] { processDone(); });
+        connect(&m_timeout, &QTimer::timeout, this, [this] {
+            m_timedOut = true;
+            stopCurrentProcess();
+        });
+        connect(&m_cancellationTimer, &QTimer::timeout, this, [this] {
+            if (m_process.state() != Utils::ProcessState::NotRunning)
+                m_process.stop();
+        });
+    }
+
+    void start()
+    {
+        QTimer::singleShot(0, this, [this] {
+            if (m_shutdown || m_phase != Phase::None
+                || state() == Core::RuntimePackageCompilerJobState::Finished) {
+                return;
+            }
+            if (state() == Core::RuntimePackageCompilerJobState::CancelRequested) {
+                scheduleReconciliation();
+                return;
+            }
+            beginProcess(Phase::Primary, m_setup.primaryCommand, m_setup.primaryTimeout);
+        });
+    }
+
+    void forceShutdown()
+    {
+        if (m_shutdown)
+            return;
+        m_shutdown = true;
+        m_timeout.stop();
+        m_cancellationTimer.stop();
+        while (m_process.state() != Utils::ProcessState::NotRunning) {
+            m_process.kill();
+            if (m_process.state() != Utils::ProcessState::NotRunning)
+                m_process.waitForFinished(QDeadlineTimer::Forever);
+        }
+        if (state() != Core::RuntimePackageCompilerJobState::Finished)
+            finishWithError(Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure);
+    }
+
+protected:
+    void requestCancellation() final
+    {
+        if (m_phase == Phase::ReconciliationPending || m_phase == Phase::Reconciliation)
+            return;
+        if (m_process.state() == Utils::ProcessState::NotRunning) {
+            if (m_setup.reconciliationCommand)
+                scheduleReconciliation();
+            else
+                finishWithError(
+                    Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure);
+            return;
+        }
+        m_process.interrupt();
+        m_cancellationTimer.start(m_setup.cancellationGrace);
+    }
+
+private:
+    enum class Phase { None, Primary, ReconciliationPending, Reconciliation };
+
+    void beginProcess(
+        Phase phase, const Utils::CommandLine &command, std::chrono::milliseconds timeout)
+    {
+        if (!m_setup.validateProvisioning || !m_setup.validateProvisioning(m_setup.lease)) {
+            finishWithError(Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure);
+            return;
+        }
+        m_phase = phase;
+        m_standardOutput.clear();
+        m_standardError.clear();
+        m_outputOverflow = false;
+        m_timedOut = false;
+        m_process.setCommand(command);
+        m_process.setWorkingDirectory(m_setup.workingDirectory);
+        if (m_setup.processEnvironment)
+            m_process.setEnvironment(*m_setup.processEnvironment);
+        m_process.setProcessChannelMode(Utils::ProcessChannelMode::SeparateChannels);
+        m_process.setAbortOnMetaChars(true);
+        m_process.start();
+        m_timeout.start(timeout);
+    }
+
+    void scheduleReconciliation()
+    {
+        if (!m_setup.reconciliationCommand) {
+            finishWithError(Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure);
+            return;
+        }
+        if (m_phase == Phase::ReconciliationPending || m_phase == Phase::Reconciliation)
+            return;
+        m_phase = Phase::ReconciliationPending;
+        QTimer::singleShot(0, this, [this] {
+            if (m_shutdown || state() == Core::RuntimePackageCompilerJobState::Finished)
+                return;
+            beginReconciliation();
+        });
+    }
+
+    void beginReconciliation()
+    {
+        if (m_phase != Phase::ReconciliationPending || !m_setup.reconciliationCommand)
+            return;
+        m_cancellationTimer.stop();
+        beginProcess(
+            Phase::Reconciliation, *m_setup.reconciliationCommand, m_setup.reconciliationTimeout);
+    }
+
+    void appendOutput(const QByteArray &bytes, bool standardOutput)
+    {
+        QByteArray &target = standardOutput ? m_standardOutput : m_standardError;
+        const qsizetype limit = standardOutput ? m_setup.maximumStandardOutputBytes
+                                               : m_setup.maximumStandardErrorBytes;
+        if (bytes.size() > limit - target.size()) {
+            const qsizetype remaining = qMax<qsizetype>(0, limit - target.size());
+            target.append(bytes.constData(), remaining);
+            m_outputOverflow = true;
+            stopCurrentProcess();
+            return;
+        }
+        target.append(bytes);
+    }
+
+    void stopCurrentProcess()
+    {
+        if (m_process.state() == Utils::ProcessState::NotRunning)
+            return;
+        m_process.interrupt();
+        m_cancellationTimer.start(m_setup.cancellationGrace);
+    }
+
+    Core::RuntimePackageCompilerProcessOutput processOutput() const
+    {
+        return {
+            m_process.exitStatus() == Utils::ProcessExitStatus::NormalExit,
+            m_process.exitCode(),
+            m_standardOutput,
+            m_standardError,
+        };
+    }
+
+    void processDone()
+    {
+        m_timeout.stop();
+        m_cancellationTimer.stop();
+        appendOutput(m_process.readAllRawStandardOutput(), true);
+        appendOutput(m_process.readAllRawStandardError(), false);
+        if (m_shutdown)
+            return;
+        const Core::RuntimePackageCompilerProcessOutput output = processOutput();
+        if (!m_setup.validateProvisioning
+            || !m_setup.validateProvisioning(m_setup.lease)) {
+            finishWithError(Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure);
+            return;
+        }
+
+        if (m_phase == Phase::Reconciliation) {
+            reconciliationDone(output);
+            return;
+        }
+
+        Utils::Result<Data::RuntimePackageCompilerJobResult> decoded = Utils::ResultError(
+            Tr::tr("Compiler process did not produce a terminal result."));
+        if (!m_outputOverflow && !m_timedOut)
+            decoded = m_setup.decodePrimary(m_setup.lease, output);
+        if (decoded)
+            m_primaryResult = *decoded;
+
+        if (state() == Core::RuntimePackageCompilerJobState::CancelRequested
+            && m_setup.reconciliationCommand) {
+            scheduleReconciliation();
+            return;
+        }
+        if (m_outputOverflow || m_timedOut || !output.exitedNormally) {
+            finishWithError(Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure);
+            return;
+        }
+        if (!decoded) {
+            finishWithError(Core::RuntimePackageCompilerJobCompletionError::InvalidTerminalResult);
+            return;
+        }
+        finishWithResult(*decoded);
+    }
+
+    void reconciliationDone(const Core::RuntimePackageCompilerProcessOutput &output)
+    {
+        if (m_outputOverflow || m_timedOut || !output.exitedNormally) {
+            finishWithError(Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure);
+            return;
+        }
+        const Utils::Result<Data::RuntimePackageCompilerQueryResult> reconciled
+            = m_setup.decodeReconciliation(m_setup.lease, output);
+        if (!reconciled) {
+            finishWithError(Core::RuntimePackageCompilerJobCompletionError::InvalidTerminalResult);
+            return;
+        }
+        if (m_primaryResult) {
+            finishWithResult(*m_primaryResult);
+            return;
+        }
+        finishWithError(Core::RuntimePackageCompilerJobCompletionError::CanceledAfterReconciliation);
+    }
+
+    void finishWithResult(const Data::RuntimePackageCompilerJobResult &result)
+    {
+        m_setup.lease = {};
+        finish(result);
+    }
+
+    void finishWithError(Core::RuntimePackageCompilerJobCompletionError error)
+    {
+        m_setup.lease = {};
+        finishWithCompletionError(error);
+    }
+
+    Setup m_setup;
+    Utils::Process m_process;
+    QTimer m_timeout;
+    QTimer m_cancellationTimer;
+    Phase m_phase = Phase::None;
+    QByteArray m_standardOutput;
+    QByteArray m_standardError;
+    bool m_outputOverflow = false;
+    bool m_timedOut = false;
+    bool m_shutdown = false;
+    std::optional<Data::RuntimePackageCompilerJobResult> m_primaryResult;
+};
+
+} // namespace
+
+bool RuntimePackageCompilerProcessLimits::isValid() const
+{
+    return maximumStandardOutputBytes > 0 && maximumStandardErrorBytes > 0
+           && maximumArtifactBytes > 0 && commandTimeout > std::chrono::milliseconds::zero()
+           && queryTimeout > std::chrono::milliseconds::zero()
+           && cancellationGrace > std::chrono::milliseconds::zero();
+}
+
+class ProvisionedRuntimePackageCompilerProvider::Private
+{
+public:
+    Private(
+        ProvisionedRuntimePackageCompilerProvider *q,
+        const Utils::FilePath &provisioningFile,
+        const Utils::FilePath &compilerRoot,
+        RuntimePackageCompilerProcessLimits processLimits,
+        std::optional<CompilerRuntimeBundleProfile> runtimeBundle = std::nullopt,
+        std::optional<CompilerPythonRuntimeProfile> pythonRuntime = std::nullopt,
+        std::optional<Utils::FilePath> runtimeExpectationFile = std::nullopt)
+        : q(q)
+        , store(compilerRoot)
+        , limits(processLimits)
+    {
+        if (!limits.isValid()) {
+            error = Tr::tr("Compiler process limits are invalid.");
+            return;
+        }
+        std::optional<CompilerRuntimeBootstrapProfile> loadedBootstrap;
+        if (runtimeExpectationFile) {
+            const Utils::Result<CompilerRuntimeBootstrapProfile> loaded
+                = CompilerRuntimeBootstrapProfile::load(*runtimeExpectationFile);
+            if (!loaded) {
+                error = loaded.error();
+                return;
+            }
+            loadedBootstrap = *loaded;
+            runtimeBundle = loadedBootstrap->compilerRuntime();
+            pythonRuntime = loadedBootstrap->pythonRuntime();
+            const auto pathsOverlap = [](const Utils::FilePath &left,
+                                         const Utils::FilePath &right) {
+                const std::optional<QString> canonicalLeft = plannedCanonicalPath(left);
+                const std::optional<QString> canonicalRight = plannedCanonicalPath(right);
+                return !canonicalLeft || !canonicalRight || *canonicalLeft == *canonicalRight
+                       || canonicalLeft->startsWith(*canonicalRight + QLatin1Char('/'))
+                       || canonicalRight->startsWith(*canonicalLeft + QLatin1Char('/'));
+            };
+            if (pathsOverlap(compilerRoot, runtimeBundle->bundleRoot())
+                || pathsOverlap(compilerRoot, pythonRuntime->companionRoot())
+                || pathsOverlap(compilerRoot, pythonRuntime->runtimeRoot())) {
+                error = Tr::tr("Compiler operation storage must be outside signed runtime trees.");
+                return;
+            }
+        }
+        const Utils::Result<CompilerProvisioningProfile> loaded = CompilerProvisioningProfile::load(
+            provisioningFile);
+        if (!loaded) {
+            error = loaded.error();
+            return;
+        }
+        profile = *loaded;
+        if (loadedBootstrap
+            && (profile->profileSha256() != loadedBootstrap->provisioningProfileSha256()
+                || profile->executable() != runtimeBundle->compilerExecutable()
+                || profile->contractIdentity().contractVersion
+                       != runtimeBundle->identity().compilerContractVersion)) {
+            error = Tr::tr(
+                "Compiler provisioning does not match the runtime bootstrap identity.");
+            profile.reset();
+            return;
+        }
+        const Utils::Result<> initialized = store.initialize();
+        if (!initialized) {
+            error = initialized.error();
+            profile.reset();
+            return;
+        }
+        Utils::Result<CompilerOperationLease> lease = store.acquireLease();
+        if (!lease) {
+            error = lease.error();
+            profile.reset();
+            return;
+        }
+        const Utils::Result<Utils::FilePath> pinnedPublicKey = store.pinProvisionedFile(
+            *lease,
+            profile->exactProductionPublicKeyBytes(),
+            profile->productionPublicKeySha256(),
+            CompilerProvisionedFileKind::ProductionPublicKey);
+        if (!pinnedPublicKey) {
+            error = pinnedPublicKey.error();
+            profile.reset();
+            return;
+        }
+
+        if (runtimeBundle.has_value() != pythonRuntime.has_value()) {
+            error = Tr::tr("Compiler and Python runtime profiles must be provisioned together.");
+            profile.reset();
+            return;
+        }
+
+        Utils::FilePath selectedExecutable;
+        if (runtimeBundle) {
+            if (const Utils::Result<> current = runtimeBundle->validateCurrent(); !current) {
+                error = current.error();
+                profile.reset();
+                return;
+            }
+            if (const Utils::Result<> current = pythonRuntime->validateCurrent(); !current) {
+                error = current.error();
+                profile.reset();
+                return;
+            }
+            if (const Utils::Result<> companionBinding
+                = validateCompilerRuntimeCompanionBinding(
+                    runtimeBundle->identity(), pythonRuntime->identity());
+                !companionBinding) {
+                error = companionBinding.error();
+                profile.reset();
+                return;
+            }
+            selectedExecutable = runtimeBundle->compilerExecutable();
+            this->runtimeBundle = std::move(runtimeBundle);
+            this->pythonRuntime = std::move(pythonRuntime);
+            this->runtimeBootstrap = std::move(loadedBootstrap);
+            processEnvironment.emplace(Utils::NameValuePairs{
+                {QStringLiteral("EMBEDLABS_COMPILER_PYTHON"),
+                 this->pythonRuntime->pythonExecutable().toFSPathString()},
+                {QStringLiteral("LANG"), QStringLiteral("C")},
+                {QStringLiteral("LC_ALL"), QStringLiteral("C")},
+                {QStringLiteral("PATH"), QStringLiteral("/usr/bin:/bin")},
+                {QStringLiteral("PYTHONBREAKPOINT"), QStringLiteral("0")},
+                {QStringLiteral("PYTHONDONTWRITEBYTECODE"), QStringLiteral("1")},
+                {QStringLiteral("PYTHONHASHSEED"), QStringLiteral("0")},
+                {QStringLiteral("PYTHONIOENCODING"), QStringLiteral("utf-8")},
+                {QStringLiteral("PYTHONNOUSERSITE"), QStringLiteral("1")},
+                {QStringLiteral("PYTHONPATH"),
+                 this->runtimeBundle->compilerImportRoot().toFSPathString()},
+                {QStringLiteral("PYTHONSAFEPATH"), QStringLiteral("1")},
+                {QStringLiteral("PYTHONUTF8"), QStringLiteral("1")},
+                {QStringLiteral("TZ"), QStringLiteral("UTC")},
+            });
+        } else {
+            const Utils::Result<Utils::FilePath> pinnedExecutable = store.pinProvisionedFile(
+                *lease,
+                profile->exactExecutableBytes(),
+                profile->executableSha256(),
+                CompilerProvisionedFileKind::Executable);
+            if (!pinnedExecutable) {
+                error = pinnedExecutable.error();
+                profile.reset();
+                return;
+            }
+            selectedExecutable = *pinnedExecutable;
+        }
+        if (const Utils::Result<> pinned
+            = profile->usePinnedFiles(selectedExecutable, *pinnedPublicKey);
+            !pinned) {
+            error = pinned.error();
+            profile.reset();
+            this->runtimeBootstrap.reset();
+            this->runtimeBundle.reset();
+            this->pythonRuntime.reset();
+            return;
+        }
+        q->setAvailable(true);
+    }
+
+    Utils::Result<> validateExecutionFiles(const CompilerOperationLease &lease)
+    {
+        if (!profile)
+            return Utils::ResultError(error);
+        if (runtimeBootstrap) {
+            if (const Utils::Result<> current = runtimeBootstrap->validateCurrent(); !current)
+                return current;
+        } else if (runtimeBundle) {
+            if (const Utils::Result<> current = runtimeBundle->validateCurrent(); !current)
+                return current;
+            if (!pythonRuntime)
+                return Utils::ResultError(Tr::tr("Python runtime profile is unavailable."));
+            if (const Utils::Result<> current = pythonRuntime->validateCurrent(); !current)
+                return current;
+            if (const Utils::Result<> companionBinding
+                = validateCompilerRuntimeCompanionBinding(
+                    runtimeBundle->identity(), pythonRuntime->identity());
+                !companionBinding) {
+                return companionBinding;
+            }
+        } else if (const Utils::Result<> executable = store.validatePinnedProvisionedFile(
+                       lease,
+                       profile->executable(),
+                       profile->executableSha256(),
+                       CompilerProvisionedFileKind::Executable);
+                   !executable) {
+            return executable;
+        }
+        return store.validatePinnedProvisionedFile(
+            lease,
+            profile->productionPublicKey(),
+            profile->productionPublicKeySha256(),
+            CompilerProvisionedFileKind::ProductionPublicKey);
+    }
+
+    Utils::FilePath compilerExecutable() const
+    {
+        return runtimeBundle ? runtimeBundle->compilerExecutable() : profile->executable();
+    }
+
+    Utils::Result<> validateProfile(const Data::RuntimePackageCompilerContractIdentity &identity)
+    {
+        if (shuttingDown)
+            return Utils::ResultError(Tr::tr("Compiler provider is shutting down."));
+        if (!profile)
+            return Utils::ResultError(error);
+        const Utils::Result<> current = profile->validateCurrent();
+        if (!current) {
+            error = current.error();
+            q->setAvailable(false);
+            return Utils::ResultError(error);
+        }
+        if (runtimeBootstrap) {
+            const Utils::Result<> current = runtimeBootstrap->validateCurrent();
+            if (!current) {
+                error = current.error();
+                q->setAvailable(false);
+                return Utils::ResultError(error);
+            }
+        } else if (runtimeBundle) {
+            const Utils::Result<> bundleCurrent = runtimeBundle->validateCurrent();
+            if (!bundleCurrent) {
+                error = bundleCurrent.error();
+                q->setAvailable(false);
+                return Utils::ResultError(error);
+            }
+            if (!pythonRuntime) {
+                error = Tr::tr("Python runtime profile is unavailable.");
+                q->setAvailable(false);
+                return Utils::ResultError(error);
+            }
+            const Utils::Result<> pythonCurrent = pythonRuntime->validateCurrent();
+            if (!pythonCurrent) {
+                error = pythonCurrent.error();
+                q->setAvailable(false);
+                return Utils::ResultError(error);
+            }
+            const Utils::Result<> companionBinding = validateCompilerRuntimeCompanionBinding(
+                runtimeBundle->identity(), pythonRuntime->identity());
+            if (!companionBinding) {
+                error = companionBinding.error();
+                q->setAvailable(false);
+                return Utils::ResultError(error);
+            }
+        }
+        if (identity != profile->contractIdentity()) {
+            return Utils::ResultError(
+                Tr::tr("Compiler request contract does not match provisioning."));
+        }
+        return Utils::ResultOk;
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerJob *> schedule(ProvisionedCompilerJob::Setup setup)
+    {
+        if (shuttingDown)
+            return Utils::ResultError(Tr::tr("Compiler provider is shutting down."));
+        setup.processEnvironment = processEnvironment;
+        setup.validateProvisioning = [this](const CompilerOperationLease &lease) -> Utils::Result<> {
+            const Utils::Result<> current = validateExecutionFiles(lease);
+            if (!current) {
+                error = current.error();
+                q->setAvailable(false);
+            }
+            return current;
+        };
+        auto *job = new ProvisionedCompilerJob(std::move(setup), q);
+        jobs.insert(job);
+        QObject::connect(job, &QObject::destroyed, q, [this, job] { jobs.remove(job); });
+        job->start();
+        return job;
+    }
+
+    QueryResultDecoder queryDecoder(const Data::RuntimePackageCompilerQueryRequest &request)
+    {
+        return [this, request](
+                   const CompilerOperationLease &lease,
+                   const Core::RuntimePackageCompilerProcessOutput &output)
+                   -> Utils::Result<Data::RuntimePackageCompilerQueryResult> {
+            const Utils::Result<Data::RuntimePackageCompilerQueryResult> decoded
+                = Core::decodeRuntimePackageCompilerQueryResult(request, output);
+            if (!decoded)
+                return Utils::ResultError(decoded.error());
+            const Utils::Result<Utils::FilePath> persisted = store.persistCanonicalResponse(
+                lease,
+                request.operationId,
+                CompilerCanonicalEvidenceKind::QueryResponse,
+                decoded->envelope.canonicalResult);
+            if (!persisted)
+                return Utils::ResultError(persisted.error());
+            return *decoded;
+        };
+    }
+
+    std::optional<Utils::CommandLine> reconciliationCommand(
+        const Data::RuntimePackageCompilerOperationId &operationId) const
+    {
+        if (!profile)
+            return std::nullopt;
+        return commandLine(
+            compilerExecutable(),
+            QStringLiteral("query"),
+            {QStringLiteral("--operation-id"),
+             operationId.value(),
+             QStringLiteral("--ledger"),
+             store.compilerLedger().toFSPathString()});
+    }
+
+    ProvisionedRuntimePackageCompilerProvider *q;
+    CompilerOperationStore store;
+    RuntimePackageCompilerProcessLimits limits;
+    std::optional<CompilerProvisioningProfile> profile;
+    std::optional<CompilerRuntimeBootstrapProfile> runtimeBootstrap;
+    std::optional<CompilerRuntimeBundleProfile> runtimeBundle;
+    std::optional<CompilerPythonRuntimeProfile> pythonRuntime;
+    std::optional<Utils::Environment> processEnvironment;
+    QString error;
+    QSet<ProvisionedCompilerJob *> jobs;
+    bool shuttingDown = false;
+};
+
+ProvisionedRuntimePackageCompilerProvider::ProvisionedRuntimePackageCompilerProvider(
+    const Utils::FilePath &provisioningFile,
+    const Utils::FilePath &compilerRoot,
+    RuntimePackageCompilerProcessLimits limits,
+    QObject *parent)
+    : Core::RuntimePackageCompilerProvider(
+          Constants::PROJECT_COMPILER_PROVIDER_ID, Tr::tr("Provisioned project compiler"), parent)
+    , d(std::make_unique<Private>(this, provisioningFile, compilerRoot, limits))
+{}
+
+ProvisionedRuntimePackageCompilerProvider::ProvisionedRuntimePackageCompilerProvider(
+    const Utils::FilePath &provisioningFile,
+    const Utils::FilePath &compilerRoot,
+    const Utils::FilePath &runtimeExpectationFile,
+    RuntimePackageCompilerProcessLimits limits,
+    QObject *parent)
+    : Core::RuntimePackageCompilerProvider(
+          Constants::PROJECT_COMPILER_PROVIDER_ID, Tr::tr("Provisioned project compiler"), parent)
+    , d(std::make_unique<Private>(
+          this,
+          provisioningFile,
+          compilerRoot,
+          limits,
+          std::nullopt,
+          std::nullopt,
+          runtimeExpectationFile))
+{}
+
+ProvisionedRuntimePackageCompilerProvider::ProvisionedRuntimePackageCompilerProvider(
+    const Utils::FilePath &provisioningFile,
+    const Utils::FilePath &compilerRoot,
+    const CompilerRuntimeBundleProfile &runtimeBundle,
+    const CompilerPythonRuntimeProfile &pythonRuntime,
+    RuntimePackageCompilerProcessLimits limits,
+    QObject *parent)
+    : Core::RuntimePackageCompilerProvider(
+          Constants::PROJECT_COMPILER_PROVIDER_ID, Tr::tr("Provisioned project compiler"), parent)
+    , d(std::make_unique<Private>(
+          this,
+          provisioningFile,
+          compilerRoot,
+          limits,
+          runtimeBundle,
+          pythonRuntime))
+{}
+
+ProvisionedRuntimePackageCompilerProvider::~ProvisionedRuntimePackageCompilerProvider()
+{
+    shutdown();
+}
+
+QString ProvisionedRuntimePackageCompilerProvider::provisioningError() const
+{
+    return d->error;
+}
+
+QString ProvisionedRuntimePackageCompilerProvider::unavailableReason() const
+{
+    return userFacingProvisioningError(d->error);
+}
+
+Utils::FilePath ProvisionedRuntimePackageCompilerProvider::compilerRoot() const
+{
+    return d->store.compilerRoot();
+}
+
+Utils::FilePath ProvisionedRuntimePackageCompilerProvider::operationRoot(
+    const Data::RuntimePackageCompilerOperationId &operationId) const
+{
+    return d->store.operationRoot(operationId);
+}
+
+Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompilerProvider::compile(
+    const Data::RuntimePackageCompilerCompileRequest &request)
+{
+    if (const Utils::Result<> current = d->validateProfile(request.contractIdentity); !current)
+        return Utils::ResultError(current.error());
+    if (!request.isValid()
+        || request.sourceArtifacts.productionPublicKey.sha256
+               != d->profile->productionPublicKeySha256()
+        || request.targetProfile.signingKeyIdSha256 != d->profile->productionPublicKeySha256()) {
+        return Utils::ResultError(
+            Tr::tr("Compile request does not match the provisioned production key."));
+    }
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> canonical
+        = Core::encodeRuntimePackageCompilerCompileRequest(request);
+    if (!canonical)
+        return Utils::ResultError(canonical.error());
+    Utils::Result<CompilerOperationLease> lease = d->store.acquireLease();
+    if (!lease)
+        return Utils::ResultError(lease.error());
+    const Utils::Result<CompilerOperationPaths> paths
+        = d->store.reserveCompile(*lease, request, *canonical);
+    if (!paths)
+        return Utils::ResultError(paths.error());
+
+    const Data::RuntimePackageCompilerQueryRequest queryRequest{
+        request.operationId,
+        request.contractIdentity,
+        canonical->sha256(),
+    };
+    const qsizetype maximumArtifactBytes = d->limits.maximumArtifactBytes;
+    JobResultDecoder decoder = [store = &d->store, request, paths = *paths, maximumArtifactBytes](
+                                   const CompilerOperationLease &lease,
+                                   const Core::RuntimePackageCompilerProcessOutput &output)
+        -> Utils::Result<Data::RuntimePackageCompilerJobResult> {
+        Data::RuntimePackageCompilerCanonicalJson signRequest;
+        if (output.exitedNormally && output.exitCode == 0) {
+            const Utils::Result<QByteArray> bytes = store->readProviderFile(
+                lease, paths.outputDir / "sign-request.json", maximumArtifactBytes);
+            if (!bytes)
+                return Utils::ResultError(bytes.error());
+            signRequest = Data::RuntimePackageCompilerCanonicalJson::fromExactBytes(*bytes);
+        }
+        const Utils::Result<Data::RuntimePackageCompilerCompileResult> decoded
+            = Core::decodeRuntimePackageCompilerCompileResult(request, output, signRequest);
+        if (!decoded)
+            return Utils::ResultError(decoded.error());
+        if (decoded->isSuccess()) {
+            if (Utils::FilePath::fromString(decoded->outputDirectory).toFSPathString()
+                    != paths.outputDir.toFSPathString()
+                || !decoded->compiledProjectSha256 || !decoded->compileReportSha256
+                || !decoded->effectiveProjectCompanionSha256 || !decoded->manifestSha256) {
+                return Utils::ResultError(
+                    Tr::tr("Compiler result references an unowned output path."));
+            }
+            const QList<std::pair<Utils::FilePath, Data::RuntimePackageCompilerSha256>> evidence{
+                {paths.outputDir / "project.json", *decoded->compiledProjectSha256},
+                {paths.outputDir / "packages" / "compile_report.json",
+                 *decoded->compileReportSha256},
+                {paths.outputDir / "effective-project-companion-v1.json",
+                 *decoded->effectiveProjectCompanionSha256},
+                {paths.outputDir / "signing_stage" / "manifest.json", *decoded->manifestSha256},
+                {paths.outputDir / "sign-request.json", decoded->signRequest->sha256()},
+            };
+            for (const auto &[file, digest] : evidence) {
+                if (const Utils::Result<Utils::FilePath> persisted = store->persistFileEvidence(
+                        lease, request.operationId, file, digest, maximumArtifactBytes);
+                    !persisted) {
+                    return Utils::ResultError(persisted.error());
+                }
+            }
+            if (const Utils::Result<Utils::FilePath> persisted = store->persistCanonicalResponse(
+                    lease,
+                    request.operationId,
+                    CompilerCanonicalEvidenceKind::SignRequest,
+                    *decoded->signRequest);
+                !persisted) {
+                return Utils::ResultError(persisted.error());
+            }
+        }
+        if (const Utils::Result<Utils::FilePath> persisted = store->persistCanonicalResponse(
+                lease,
+                request.operationId,
+                CompilerCanonicalEvidenceKind::CompilerRecord,
+                decoded->envelope.canonicalResult);
+            !persisted) {
+            return Utils::ResultError(persisted.error());
+        }
+        return Data::RuntimePackageCompilerJobResult{*decoded};
+    };
+
+    return d->schedule({
+        Data::RuntimePackageCompilerCommand::Compile,
+        commandLine(
+            d->compilerExecutable(),
+            QStringLiteral("compile"),
+            {QStringLiteral("--request"),
+             paths->compileRequest.toFSPathString(),
+             QStringLiteral("--artifact-root"),
+             paths->artifactRoot.toFSPathString(),
+             QStringLiteral("--output-dir"),
+             paths->outputDir.toFSPathString(),
+             QStringLiteral("--ledger"),
+             paths->compilerLedger.toFSPathString()}),
+        paths->operationRoot,
+        d->limits.commandTimeout,
+        d->reconciliationCommand(request.operationId),
+        d->limits.queryTimeout,
+        d->limits.cancellationGrace,
+        d->limits.maximumStandardOutputBytes,
+        d->limits.maximumStandardErrorBytes,
+        std::move(*lease),
+        std::move(decoder),
+        d->queryDecoder(queryRequest),
+        {},
+        {},
+    });
+}
+
+Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompilerProvider::finalize(
+    const Data::RuntimePackageCompilerFinalizeRequest &request)
+{
+    if (const Utils::Result<> current = d->validateProfile(request.contractIdentity); !current)
+        return Utils::ResultError(current.error());
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> canonical
+        = Core::encodeRuntimePackageCompilerFinalizeRequest(request);
+    if (!canonical)
+        return Utils::ResultError(canonical.error());
+    Utils::Result<CompilerOperationLease> lease = d->store.acquireLease();
+    if (!lease)
+        return Utils::ResultError(lease.error());
+    const Utils::Result<CompilerOperationPaths> paths
+        = d->store.reserveFinalize(*lease, request, *canonical);
+    if (!paths)
+        return Utils::ResultError(paths.error());
+    const Utils::Result<Utils::FilePath> signResponse = d->store.persistCanonicalResponse(
+        *lease,
+        request.operationId,
+        CompilerCanonicalEvidenceKind::SignResponse,
+        request.detachedSigningResponse);
+    if (!signResponse)
+        return Utils::ResultError(signResponse.error());
+
+    const Data::RuntimePackageCompilerQueryRequest queryRequest{
+        request.operationId,
+        request.contractIdentity,
+        request.compileRequestSha256,
+    };
+    const qsizetype maximumArtifactBytes = d->limits.maximumArtifactBytes;
+    JobResultDecoder decoder = [store = &d->store, request, paths = *paths, maximumArtifactBytes](
+                                   const CompilerOperationLease &lease,
+                                   const Core::RuntimePackageCompilerProcessOutput &output)
+        -> Utils::Result<Data::RuntimePackageCompilerJobResult> {
+        QByteArray packageBytes;
+        if (output.exitedNormally && output.exitCode == 0) {
+            const Utils::Result<QByteArray> bytes
+                = store->readProviderFile(lease, paths.package, maximumArtifactBytes);
+            if (!bytes)
+                return Utils::ResultError(bytes.error());
+            packageBytes = *bytes;
+        }
+        const Utils::Result<Data::RuntimePackageCompilerFinalizeResult> decoded
+            = Core::decodeRuntimePackageCompilerFinalizeResult(request, output, packageBytes);
+        if (!decoded)
+            return Utils::ResultError(decoded.error());
+        if (decoded->isSuccess()) {
+            if (Utils::FilePath::fromString(decoded->packagePath).toFSPathString()
+                != paths.package.toFSPathString()) {
+                return Utils::ResultError(
+                    Tr::tr("Finalizer result references an unowned package path."));
+            }
+            const Utils::Result<Utils::FilePath> persisted = store->persistPackage(
+                lease, request.operationId, decoded->packageBytes, *decoded->packageSha256);
+            if (!persisted)
+                return Utils::ResultError(persisted.error());
+        }
+        if (const Utils::Result<Utils::FilePath> persisted = store->persistCanonicalResponse(
+                lease,
+                request.operationId,
+                CompilerCanonicalEvidenceKind::CompilerRecord,
+                decoded->envelope.canonicalResult);
+            !persisted) {
+            return Utils::ResultError(persisted.error());
+        }
+        return Data::RuntimePackageCompilerJobResult{*decoded};
+    };
+
+    return d->schedule({
+        Data::RuntimePackageCompilerCommand::Finalize,
+        commandLine(
+            d->compilerExecutable(),
+            QStringLiteral("finalize"),
+            {QStringLiteral("--request"),
+             paths->compileRequest.toFSPathString(),
+             QStringLiteral("--output-dir"),
+             paths->outputDir.toFSPathString(),
+             QStringLiteral("--ledger"),
+             paths->compilerLedger.toFSPathString(),
+             QStringLiteral("--sign-response"),
+             paths->signResponse.toFSPathString(),
+             QStringLiteral("--public-key"),
+             d->profile->productionPublicKey().toFSPathString(),
+             QStringLiteral("--output"),
+             paths->package.toFSPathString()}),
+        paths->operationRoot,
+        d->limits.commandTimeout,
+        d->reconciliationCommand(request.operationId),
+        d->limits.queryTimeout,
+        d->limits.cancellationGrace,
+        d->limits.maximumStandardOutputBytes,
+        d->limits.maximumStandardErrorBytes,
+        std::move(*lease),
+        std::move(decoder),
+        d->queryDecoder(queryRequest),
+        {},
+        {},
+    });
+}
+
+Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompilerProvider::query(
+    const Data::RuntimePackageCompilerQueryRequest &request)
+{
+    if (const Utils::Result<> current = d->validateProfile(request.contractIdentity); !current)
+        return Utils::ResultError(current.error());
+    Utils::Result<CompilerOperationLease> lease = d->store.acquireLease();
+    if (!lease)
+        return Utils::ResultError(lease.error());
+    const Utils::Result<CompilerOperationQueryValidation> validation
+        = d->store.validateQuery(*lease, request);
+    if (!validation)
+        return Utils::ResultError(validation.error());
+    const std::optional<Utils::CommandLine> queryCommand = d->reconciliationCommand(
+        request.operationId);
+    if (!queryCommand)
+        return Utils::ResultError(Tr::tr("Compiler query command is unavailable."));
+    if (validation->state == CompilerOperationQueryState::OperationDirectoryAbsent) {
+        JobResultDecoder decoder = [request](
+                                       const CompilerOperationLease &,
+                                       const Core::RuntimePackageCompilerProcessOutput &output)
+            -> Utils::Result<Data::RuntimePackageCompilerJobResult> {
+            const Utils::Result<Data::RuntimePackageCompilerQueryResult> result
+                = decodeExactOperationUnknown(request, output);
+            if (!result)
+                return Utils::ResultError(result.error());
+            return Data::RuntimePackageCompilerJobResult{*result};
+        };
+        return d->schedule({
+            Data::RuntimePackageCompilerCommand::Query,
+            *queryCommand,
+            d->store.compilerRoot(),
+            d->limits.queryTimeout,
+            std::nullopt,
+            d->limits.queryTimeout,
+            d->limits.cancellationGrace,
+            d->limits.maximumStandardOutputBytes,
+            d->limits.maximumStandardErrorBytes,
+            std::move(*lease),
+            std::move(decoder),
+            {},
+            {},
+            {},
+        });
+    }
+    JobResultDecoder decoder = [decode = d->queryDecoder(request)](
+                                   const CompilerOperationLease &lease,
+                                   const Core::RuntimePackageCompilerProcessOutput &output)
+        -> Utils::Result<Data::RuntimePackageCompilerJobResult> {
+        const Utils::Result<Data::RuntimePackageCompilerQueryResult> result = decode(lease, output);
+        if (!result)
+            return Utils::ResultError(result.error());
+        return Data::RuntimePackageCompilerJobResult{*result};
+    };
+    return d->schedule({
+        Data::RuntimePackageCompilerCommand::Query,
+        *queryCommand,
+        validation->paths.operationRoot,
+        d->limits.queryTimeout,
+        std::nullopt,
+        d->limits.queryTimeout,
+        d->limits.cancellationGrace,
+        d->limits.maximumStandardOutputBytes,
+        d->limits.maximumStandardErrorBytes,
+        std::move(*lease),
+        std::move(decoder),
+        {},
+        {},
+        {},
+    });
+}
+
+Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompilerProvider::verify(
+    const Data::RuntimePackageCompilerVerifyRequest &request)
+{
+    if (const Utils::Result<> current = d->validateProfile(request.contractIdentity); !current)
+        return Utils::ResultError(current.error());
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> canonical
+        = Core::encodeRuntimePackageCompilerVerifyRequest(request);
+    if (!canonical)
+        return Utils::ResultError(canonical.error());
+    Utils::Result<CompilerOperationLease> lease = d->store.acquireLease();
+    if (!lease)
+        return Utils::ResultError(lease.error());
+    const Utils::Result<CompilerOperationPaths> paths
+        = d->store.reserveVerify(*lease, request, *canonical);
+    if (!paths)
+        return Utils::ResultError(paths.error());
+    JobResultDecoder decoder = [store = &d->store, request](
+                                   const CompilerOperationLease &lease,
+                                   const Core::RuntimePackageCompilerProcessOutput &output)
+        -> Utils::Result<Data::RuntimePackageCompilerJobResult> {
+        const Utils::Result<Data::RuntimePackageCompilerVerifyResult> decoded
+            = Core::decodeRuntimePackageCompilerVerifyResult(request, output);
+        if (!decoded)
+            return Utils::ResultError(decoded.error());
+        const Utils::Result<Utils::FilePath> persisted = store->persistCanonicalResponse(
+            lease,
+            request.operationId,
+            CompilerCanonicalEvidenceKind::VerifyResponse,
+            decoded->envelope.canonicalResult);
+        if (!persisted)
+            return Utils::ResultError(persisted.error());
+        return Data::RuntimePackageCompilerJobResult{*decoded};
+    };
+    return d->schedule({
+        Data::RuntimePackageCompilerCommand::Verify,
+        commandLine(
+            d->compilerExecutable(),
+            QStringLiteral("verify"),
+            {QStringLiteral("--package"),
+             paths->package.toFSPathString(),
+             QStringLiteral("--public-key"),
+             d->profile->productionPublicKey().toFSPathString()}),
+        paths->operationRoot,
+        d->limits.commandTimeout,
+        std::nullopt,
+        d->limits.queryTimeout,
+        d->limits.cancellationGrace,
+        d->limits.maximumStandardOutputBytes,
+        d->limits.maximumStandardErrorBytes,
+        std::move(*lease),
+        std::move(decoder),
+        {},
+        {},
+        {},
+    });
+}
+
+Utils::Result<> ProvisionedRuntimePackageCompilerProvider::validateActivationProof(
+    const Data::RuntimePackageCompilerActivationProof &proof) const
+{
+    if (QThread::currentThread() != thread()) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof validation must run on the compiler provider thread."));
+    }
+    const QString providerId = QString::fromUtf8(Constants::PROJECT_COMPILER_PROVIDER_ID.name());
+    if (!proof.isValid() || proof.compilerProviderId != providerId)
+        return Utils::ResultError(Tr::tr("Activation proof names a different compiler provider."));
+    if (const Utils::Result<> current = d->validateProfile(proof.contractIdentity); !current)
+        return Utils::ResultError(current.error());
+    if (proof.compileRequest.sourceArtifacts.productionPublicKey.sha256
+            != d->profile->productionPublicKeySha256()
+        || proof.compileRequest.targetProfile.signingKeyIdSha256
+               != d->profile->productionPublicKeySha256()
+        || proof.compileRequest.sourceArtifacts.productionPublicKey.exactBytes
+               != d->profile->exactProductionPublicKeyBytes()) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof does not match the provisioned production key."));
+    }
+
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> compileRequest
+        = Core::encodeRuntimePackageCompilerCompileRequest(proof.compileRequest);
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> finalizeRequest
+        = Core::encodeRuntimePackageCompilerFinalizeRequest(proof.finalizeRequest);
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> verifyRequest
+        = Core::encodeRuntimePackageCompilerVerifyRequest(proof.verifyRequest);
+    if (!compileRequest || !finalizeRequest || !verifyRequest) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof requests cannot be encoded canonically."));
+    }
+    return d->store.validateActivationProofEvidence(
+        proof, *compileRequest, *finalizeRequest, *verifyRequest, d->limits.maximumArtifactBytes);
+}
+
+Utils::Result<Data::RuntimePackageCompilerActivationProof>
+ProvisionedRuntimePackageCompilerProvider::assembleActivationProof(
+    const Core::RuntimePackageCompilerActivationProofAssemblyRequest &request) const
+{
+    if (QThread::currentThread() != thread()) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof assembly must run on the compiler provider thread."));
+    }
+    const QString providerId = QString::fromUtf8(Constants::PROJECT_COMPILER_PROVIDER_ID.name());
+    if (!request.isValid() || request.compilerProviderId != providerId)
+        return Utils::ResultError(Tr::tr("Activation proof names a different compiler provider."));
+    if (const Utils::Result<> current = d->validateProfile(request.contractIdentity); !current)
+        return Utils::ResultError(current.error());
+    if (request.compileRequest.sourceArtifacts.productionPublicKey.sha256
+            != d->profile->productionPublicKeySha256()
+        || request.compileRequest.targetProfile.signingKeyIdSha256
+               != d->profile->productionPublicKeySha256()
+        || request.compileRequest.sourceArtifacts.productionPublicKey.exactBytes
+               != d->profile->exactProductionPublicKeyBytes()) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof does not match the provisioned production key."));
+    }
+
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> compileRequest
+        = Core::encodeRuntimePackageCompilerCompileRequest(request.compileRequest);
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> finalizeRequest
+        = Core::encodeRuntimePackageCompilerFinalizeRequest(request.finalizeRequest);
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> verifyRequest
+        = Core::encodeRuntimePackageCompilerVerifyRequest(request.verifyRequest);
+    if (!compileRequest || !finalizeRequest || !verifyRequest) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof requests cannot be encoded canonically."));
+    }
+    return d->store.assembleActivationProofEvidence(
+        request, *compileRequest, *finalizeRequest, *verifyRequest, d->limits.maximumArtifactBytes);
+}
+
+void ProvisionedRuntimePackageCompilerProvider::shutdown()
+{
+    if (!d || d->shuttingDown)
+        return;
+    d->shuttingDown = true;
+    d->error = Tr::tr("Compiler provider has shut down.");
+    setAvailable(false);
+    const QSet<ProvisionedCompilerJob *> jobs = d->jobs;
+    for (ProvisionedCompilerJob *job : jobs) {
+        if (job)
+            job->forceShutdown();
+    }
+    d->jobs.clear();
+}
+
+} // namespace EtherCAT::ProjectCompiler

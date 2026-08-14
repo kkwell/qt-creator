@@ -1,0 +1,342 @@
+{
+  "schemaVersion": "embed-labs.device-adapter/v3",
+  "id": "org.embedlabs.adapter.test.atomic-output",
+  "version": "3.0.0-test",
+  "displayName": "Atomic output contract fixture",
+  "description": "Offline-only fixture for the strict v3 parser.",
+  "qualification": "qualified",
+  "matchPriority": 1,
+  "match": {
+    "vendorId": 305419896,
+    "productCode": 2271560481,
+    "minimumRevision": 1,
+    "maximumRevision": 1,
+    "exactEsiSha256": "abababababababababababababababababababababababababababababababab"
+  },
+  "controllerAdapterTarget": {
+    "adapterId": "test.atomic_output",
+    "adapterVersion": "1.0.0",
+    "adapterSha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "esiSha256": "abababababababababababababababababababababababababababababababab"
+  },
+  "capabilities": [
+    "org.embedlabs.test.atomic-output"
+  ],
+  "source": {
+    "id": "org.embedlabs.test.esi",
+    "version": "1",
+    "location": "offline-fixture.xml",
+    "sha256": "abababababababababababababababababababababababababababababababab"
+  },
+  "evidenceSha256": "",
+  "signatureVerified": false,
+  "realHardwareAllowed": false,
+  "signals": [
+    {
+      "id": "org.embedlabs.test.output.0",
+      "displayName": "Output 0",
+      "description": "",
+      "capabilities": [
+        "org.embedlabs.test.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 1,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.test.output.1",
+      "displayName": "Output 1",
+      "description": "",
+      "capabilities": [
+        "org.embedlabs.test.digital-output"
+      ],
+      "direction": "output",
+      "access": "read-write",
+      "exposure": "action-only",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5632,
+          "objectIndex": 28672,
+          "subIndex": 2,
+          "physicalType": "boolean",
+          "bitWidth": 1,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": {
+        "kind": "boolean",
+        "value": false
+      }
+    },
+    {
+      "id": "org.embedlabs.test.status",
+      "displayName": "Status",
+      "description": "",
+      "capabilities": [
+        "org.embedlabs.test.status"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "exposure": "public",
+      "required": true,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6656,
+          "objectIndex": 24577,
+          "subIndex": 0,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "engineeringTransform": {
+        "scale": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "offset": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "unit": "",
+        "rounding": "reject-inexact",
+        "constraint": {
+          "minimum": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "maximum": {
+            "numerator": "65535",
+            "denominator": "1"
+          },
+          "step": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "stepOrigin": {
+            "numerator": "0",
+            "denominator": "1"
+          },
+          "enumeration": []
+        }
+      },
+      "engineeringSafeValue": null
+    }
+  ],
+  "processDataProfiles": [
+    {
+      "id": "org.embedlabs.test.profile",
+      "signedPdoProfileId": "test-profile-v1",
+      "signedDcProfileId": null,
+      "rxPdos": [
+        5632
+      ],
+      "txPdos": [
+        6656
+      ],
+      "requiredSignals": [
+        "org.embedlabs.test.output.0",
+        "org.embedlabs.test.output.1",
+        "org.embedlabs.test.status"
+      ]
+    }
+  ],
+  "moduleProfiles": [],
+  "controlActions": [
+    {
+      "id": "org.embedlabs.test.action.apply",
+      "displayName": "Apply outputs",
+      "description": "",
+      "enabled": true,
+      "qualification": "qualified",
+      "disabledReason": null,
+      "requiresDc": false,
+      "expectedSignedDefinitionSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signedPdoProfileIds": [
+        "test-profile-v1"
+      ],
+      "failureDisposition": "hold-operational-fault",
+      "requiredSignals": [
+        "org.embedlabs.test.output.0",
+        "org.embedlabs.test.output.1",
+        "org.embedlabs.test.status"
+      ],
+      "optionalSignals": [],
+      "parameters": [
+        {
+          "id": "set_value",
+          "displayName": "Output value",
+          "description": "",
+          "dataType": "boolean",
+          "unit": "",
+          "engineeringConstraint": {
+            "minimum": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "maximum": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "step": {
+              "numerator": "1",
+              "denominator": "1"
+            },
+            "stepOrigin": {
+              "numerator": "0",
+              "denominator": "1"
+            },
+            "enumeration": []
+          },
+          "required": true,
+          "engineeringDefaultValue": {
+            "kind": "boolean",
+            "value": false
+          }
+        }
+      ],
+      "consistencyGroups": [
+        {
+          "id": "manual_outputs",
+          "members": [
+            "org.embedlabs.test.output.0",
+            "org.embedlabs.test.output.1"
+          ],
+          "recovery": "hold-safe",
+          "maxTtlCycles": 1000
+        }
+      ],
+      "steps": [
+        {
+          "kind": "wait-masked-equals",
+          "signalId": "org.embedlabs.test.status",
+          "value": {
+            "kind": "unsigned-integer",
+            "value": "1"
+          },
+          "mask": {
+            "kind": "unsigned-integer",
+            "value": "1"
+          },
+          "timeoutCycles": 1000
+        },
+        {
+          "kind": "write-group",
+          "consistencyGroup": "manual_outputs",
+          "assignments": [
+            {
+              "signalId": "org.embedlabs.test.output.0",
+              "value": {
+                "source": "parameter",
+                "engineeringConstant": null,
+                "parameterId": "set_value"
+              }
+            },
+            {
+              "signalId": "org.embedlabs.test.output.1",
+              "value": {
+                "source": "constant",
+                "engineeringConstant": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "parameterId": null
+              }
+            }
+          ]
+        },
+        {
+          "kind": "wait-cycles",
+          "cycles": 2
+        }
+      ]
+    }
+  ]
+}

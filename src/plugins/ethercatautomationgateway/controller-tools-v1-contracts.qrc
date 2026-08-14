@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/ethercatautomationgateway">
+        <file alias="controller-tools-v1.mcp-tools.json">../../../ethercat-ai-controller/api/controller-tools-v1.mcp-tools.json</file>
+        <file alias="controller-tools-v1.openapi.json">../../../ethercat-ai-controller/api/controller-tools-v1.openapi.json</file>
+    </qresource>
+</RCC>

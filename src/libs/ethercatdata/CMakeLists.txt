@@ -1,0 +1,31 @@
+add_qtc_library(EtherCATData
+  PUBLIC_DEPENDS Qt::Core
+  SOURCES
+    axisparameterevidence.h
+    controllerconnection.h
+    deviceadapter.h
+    deviceadapterauthorizationprovenance.cpp
+    deviceadapterauthorizationprovenance.h
+    deviceadapterselection.h
+    deviceparameters.h
+    diagnosticssnapshot.h
+    devicedescription.h
+    engineeringvalue.h
+    ethercatdata_global.h
+    manualcontrol.h
+    nodeid.cpp
+    nodeid.h
+    offlineconfiguration.cpp
+    offlineconfiguration.h
+    projectsnapshot.h
+    runtimepackageactivation.cpp
+    runtimepackageactivation.h
+    runtimepackagecompiler.cpp
+    runtimepackagecompiler.h
+    runtimeoutputtransaction.h
+    runtimeresource.h
+    scansnapshot.h
+    semanticmappingattestation.h
+    semanticids.h
+    semanticruntime.h
+)

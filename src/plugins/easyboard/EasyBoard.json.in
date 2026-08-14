@@ -1,0 +1,18 @@
+{
+    "Id" : "easyboard",
+    "DisplayName" : "Embed Labs",
+    "Name" : "EasyBoard",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "kvell",
+    "Vendor" : "Kvell",
+    "Copyright" : "(C) Kvell",
+    "License" : [ "Commercial Usage",
+                  "",
+                  "The current plugin is in beta"
+    ],
+    "Category" : "Embed Labs Support",
+    "Description" : "Support for deployment to and execution on Embed Labs devices. Uses SSDP auto-discovery (group 239.255.255.250, port 1901).",
+    "Url" : "https://kvell.dscloud.me:70",
+    ${IDE_PLUGIN_DEPENDENCIES}
+}

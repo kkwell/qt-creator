@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EtherCATInfo>
+  <Vendor>
+    <Id>#x11111111</Id>
+    <Name LcId="1033">Embed Labs Mock</Name>
+  </Vendor>
+  <Descriptions>
+    <Groups>
+      <Group>
+        <Type>MockIO</Type>
+        <Name LcId="1033">Mock I/O</Name>
+      </Group>
+    </Groups>
+    <Devices>
+      <Device>
+        <Type ProductCode="#x00001002" RevisionNo="#x00000001">MOCK-AIO-4X4</Type>
+        <Name LcId="1033">Mock Analog I/O 4x4</Name>
+        <GroupType>MockIO</GroupType>
+        <Sm StartAddress="#x1000" DefaultSize="128" ControlByte="#x26" Enable="1">MBoxOut</Sm>
+        <Sm StartAddress="#x1080" DefaultSize="128" ControlByte="#x22" Enable="1">MBoxIn</Sm>
+        <Sm StartAddress="#x1100" DefaultSize="8" ControlByte="#x24" Enable="1">Outputs</Sm>
+        <Sm StartAddress="#x1200" DefaultSize="8" ControlByte="#x20" Enable="1">Inputs</Sm>
+        <RxPdo Sm="2" Fixed="1" Mandatory="1">
+          <Index>#x1600</Index>
+          <Name>Analog outputs</Name>
+          <Entry><Index>#x7000</Index><SubIndex>1</SubIndex><BitLen>16</BitLen><Name>Analog output 1</Name><DataType>INT</DataType></Entry>
+          <Entry><Index>#x7000</Index><SubIndex>2</SubIndex><BitLen>16</BitLen><Name>Analog output 2</Name><DataType>INT</DataType></Entry>
+          <Entry><Index>#x7000</Index><SubIndex>3</SubIndex><BitLen>16</BitLen><Name>Analog output 3</Name><DataType>INT</DataType></Entry>
+          <Entry><Index>#x7000</Index><SubIndex>4</SubIndex><BitLen>16</BitLen><Name>Analog output 4</Name><DataType>INT</DataType></Entry>
+        </RxPdo>
+        <TxPdo Sm="3" Fixed="1" Mandatory="1">
+          <Index>#x1a00</Index>
+          <Name>Analog inputs</Name>
+          <Entry><Index>#x6000</Index><SubIndex>1</SubIndex><BitLen>16</BitLen><Name>Analog input 1</Name><DataType>INT</DataType></Entry>
+          <Entry><Index>#x6000</Index><SubIndex>2</SubIndex><BitLen>16</BitLen><Name>Analog input 2</Name><DataType>INT</DataType></Entry>
+          <Entry><Index>#x6000</Index><SubIndex>3</SubIndex><BitLen>16</BitLen><Name>Analog input 3</Name><DataType>INT</DataType></Entry>
+          <Entry><Index>#x6000</Index><SubIndex>4</SubIndex><BitLen>16</BitLen><Name>Analog input 4</Name><DataType>INT</DataType></Entry>
+        </TxPdo>
+        <Mailbox>
+          <CoE SdoInfo="true" PdoAssign="1" PdoConfig="true" CompleteAccess="1"/>
+        </Mailbox>
+      </Device>
+    </Devices>
+  </Descriptions>
+</EtherCATInfo>

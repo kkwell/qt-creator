@@ -1,0 +1,14 @@
+{
+    "Id" : "ethercatscan",
+    "DisplayName" : "EtherCAT Scan",
+    "Name" : "EtherCATScan",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "kvell",
+    "Vendor" : "Kvell",
+    "Copyright" : "(C) 2026 Kvell",
+    "License" : [ "Commercial Usage" ],
+    "Category" : "EtherCAT",
+    "Description" : "Local Mock topology scan, comparison, and offline acceptance workflow.",
+    ${IDE_PLUGIN_DEPENDENCIES}
+}
